@@ -1,0 +1,9 @@
+[package]
+name = "nvfanservice"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nvml-wrapper = { git = "https://github.com/raum-dellamorte/nvml-wrapper.git" }
+regex = "1.10.5"
+sudo = "0.6.0"
