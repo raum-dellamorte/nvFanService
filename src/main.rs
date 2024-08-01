@@ -1,6 +1,8 @@
 use {
   nvml_wrapper::{
-    device::Device, enum_wrappers::device::TemperatureSensor, Nvml
+    device::Device,
+    enum_wrappers::device::TemperatureSensor,
+    Nvml
   },
   regex::Regex,
   std::{
@@ -55,9 +57,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn fan_service(device: Device) -> Result<(), Box<dyn Error>> {
   let name = device.name()?;
-  let fan_count = device.num_fans()?;
-  println!("Found {} fan(s) on {}.", fan_count, name);
-  service_fans(&device, fan_count)?;
+  println!("Found {} fan(s) on {}.", device.num_fans()?, name);
+  service_fans(&device)?;
   let mut last_checked = Instant::now();
   println!("Temp: {}, Fan Speed: {}",
     device.temperature(TemperatureSensor::Gpu)?, device.fan_speed(0)?);
@@ -77,15 +78,18 @@ fn fan_service(device: Device) -> Result<(), Box<dyn Error>> {
     if last_checked.elapsed().as_secs() >= 10 {
       last_checked = Instant::now();
       // It's been 10s, do you know what your temperature is?
-      service_fans(&device, fan_count)?;
+      service_fans(&device)?;
     }
   }
   Ok(())
 }
 
-fn service_fans(device: &Device, fan_count: u32) -> Result<(), Box<dyn Error>> {
+fn service_fans(device: &Device) -> Result<(), Box<dyn Error>> {
   // if the 1st GPU is not the one we want to control, can we TemperatureSensor::Gpu + 1 ??? 
-  let temp = device.temperature(TemperatureSensor::Gpu)?;
+  let Ok(idx) = device.index() else { return Err("Failed to get index from device in service_fans()")? };
+  let Ok(fan_count) = device.num_fans() else { return Err("Failed to get num_fans from device in service_fans()")? };
+  let Ok(gpu_idx) = TemperatureSensor::try_from(idx) else { return Err("Failed to convert device index to TemperatureSensor enum in service_fans()")? };
+  let Ok(temp) = device.temperature(gpu_idx) else { return Err("Failed to get temperature reading from device in service_fans()")? };
   let new_fan_speed = match temp { // Make customizable later
     t if t > 48 => { 100 }
     t if t > 35 => {  70 }
