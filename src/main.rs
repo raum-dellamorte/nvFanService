@@ -1,18 +1,22 @@
+#![allow(unused_braces)]
 use {
   arrayvec::ArrayString,
-  cursive_core::style::{
-    BaseColor::*, Color::*, PaletteColor::*,
-  },
   cursive::{
     event::Event,
     theme::Theme,
     views::{
-      OnEventView, Panel, TextContent, TextView,
+      HideableView, LinearLayout, NamedView, OnEventView,
+      Panel, TextContent, TextView,
     },
-    Cursive, CursiveExt, 
+    Cursive,
+    CursiveExt,
+    // XY,
+  },
+  cursive_core::style::{
+    BaseColor::*, Color::*, PaletteColor::*,
   },
   nvml_wrapper::{
-    device::Device, enum_wrappers::device::TemperatureSensor, error::NvmlError, Nvml
+    device::Device, enum_wrappers::device::TemperatureSensor, error::NvmlError, Nvml,
   },
   regex::Regex,
   std::{
@@ -20,15 +24,25 @@ use {
     ffi::OsStr,
     fs::read_to_string,
     path::Path,
+    sync::{
+      Arc, Mutex,
+    },
     time::Instant,
   },
   sudo,
+  crate::{
+    cursive_custom::FanCurveUnitView,
+  },
 };
+
+mod cursive_custom;
+
+const DRY_RUN:bool = false; // Change me to a command line parameter like `--dry-run`
 
 fn main() -> Result<(), Box<dyn Error>> {
   sudo::escalate_if_needed()?;
   let nvml = init_nvml_so()?;
-  let mut curve = FanCurveUwU::new(); // Still hard coded, but we are getting there.
+  let mut curve = FanCurveUwU::new();
   curve.add(10,  0)?;
   curve.add(20, 30)?;
   curve.add(30, 60)?;
@@ -36,9 +50,10 @@ fn main() -> Result<(), Box<dyn Error>> {
   curve.add(40, 80)?;
   curve.add(52, 90)?;
   curve.add(58,100)?;
+  let curve = Arc::new(Mutex::new(curve));
   let mut fan_service = FanService {
     nvml, card_idx: None, card_name: ArrayString::new(),
-    curve, instant: Instant::now(), first_time: FirstTime(true),
+    curve: curve.clone(), instant: Instant::now(), first_time: FirstTime(true),
     text: "".to_owned(),
   };
   let name = { // Once we get the card name, we want to reuse it elsewhere.
@@ -50,8 +65,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     fan_service.card_name.as_str().to_owned()
   };
   let mut siv = Cursive::new();
-  let content = TextContent::new("  Temp: ??, Fan Speed: ???  ");
-  let content_c = content.clone();
+  let content = TextContent::new("  Temp: ??C, Fan Speed: ???%  ");
   siv.set_user_data(fan_service);
   siv.with_theme(|theme: &mut Theme| { // One day, this could be customized.
     theme.palette[Background] = Dark(Black);
@@ -60,45 +74,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     theme.palette[Primary] = Rgb(0, 200, 0);
     theme.palette[TitlePrimary] = Rgb(0, 100, 0);
   });
-  siv.add_layer(Panel::new(
-    // I struggled for 2 nights after work trying to get a game like event loop running without
-    // using a whole bloody game engine. I just wanted to check the fans every 10 secs and display
-    // the temp and fan speed. I started with a global callback on Event::Refresh but it did not
-    // seem to be executing the code. Finding OnEventView(content).on_event(Event::Refresh, ...)
-    // was the first step. I had to put everything I might need into a single struct in order to
-    // do what must be done from within the closure used by on_event(). I started off trying to
-    // get the Device from Nvml and put it in the struct, but the Borrow Checker said no. I think
-    // it's because Device has &Nvml in its struct, which means it's pointing back to the original
-    // Nvml struct from whence it came.  So I had to reason with myself... I was trying to not have
-    // to call nvml.device(idx) every time I wanted access to the device. I wanted to just hang onto
-    // my Device that required me to "carefully" unwrap a Result to get. I was being ridiculous.
-    // I'm checking the temp every 10 seconds and getting the Device by index does not take some
-    // absurd amount of time. Going from nothing to having the temp known and the fan speed set
-    // according to that temp feels pretty instantaneous regardless of how many question marks and
-    // unwraps seem to be in the way. Those are just my promises to the compiler that everything
-    // is going to be fine. trust_me!(sus_code)
-    OnEventView::new(
-      TextView::new_with_content(content.clone())
-    ).on_event(Event::Refresh, move |s| {
-      s.with_user_data(|fs: &mut FanService| {
-        if fs.first_time.0 { // We don't want to wait 10 secs for our first service
-          fs.first_time.0 = false;
-          fs.service_service().unwrap();
-          return;
-        }
-        if fs.instant.elapsed().as_secs() >= 10 {
-          fs.service_service().unwrap();
-          fs.instant = Instant::now();
-        }
-      });
-      let txt: String = s.user_data::<FanService>().unwrap().text.clone();
-      if txt.len() > 0 { // This is probably not necessary, but neither was using Cursive
-        content_c.set_content(&txt);
-      } else {
-        content_c.set_content("  Temp: ??C, Fan Speed: ???%  ");
-      }
-    })
-  ).title(name));
+  if let Ok(curve) = curve.clone().lock() {
+    siv.add_layer(OnEventView::new(LinearLayout::vertical()
+      .child(
+        Panel::new( TextView::new_with_content(content.clone()) ).title(name)
+      )
+      .child(
+        NamedView::new("SlidersHideable",HideableView::new( curve.fan_curve_view() ))
+      )
+    ).on_event(Event::Refresh, move |s| refresh_callback(s, content.clone())));
+  }
   siv.add_global_callback('q', |s| s.quit());
   siv.set_fps(10);
   siv.set_autorefresh(true);
@@ -106,11 +91,40 @@ fn main() -> Result<(), Box<dyn Error>> {
   Ok(())
 }
 
+fn refresh_callback(siv: &mut Cursive, fan_info_text: TextContent) {
+  let (_, height) = siv.screen_size().pair();
+  if let Some(hv) = siv.find_name::<HideableView<Panel<LinearLayout>>>("SlidersHideable").as_mut() {
+    if height > 17 { // Change me to a constant
+      hv.unhide();
+    } else {
+      hv.hide();
+    }
+  }
+  siv.with_user_data(|fs: &mut FanService| {
+    if fs.first_time.0 { // We don't want to wait 10 secs for our first service
+      fs.first_time.0 = false;
+      fs.service_service().unwrap();
+      return;
+    }
+    if fs.instant.elapsed().as_secs() >= 10 {
+      fs.service_service().unwrap();
+      fs.instant = Instant::now();
+    }
+  });
+  let txt: String = siv.user_data::<FanService>().unwrap().text.clone();
+  if txt.len() > 0 { // This is probably not necessary, but neither was using Cursive
+    fan_info_text.set_content(&txt);
+  } else {
+    //                        "  Temp: __C, Fan Speed: ___%  " // Making sure error message is the same size
+    fan_info_text.set_content("FanService Fail: Empty String.");
+  }
+}
+
 struct FanService {
   nvml: Nvml,
   card_idx: Option<u32>,
   card_name: ArrayString<32>,
-  curve: FanCurveUwU,
+  curve: Arc<Mutex<FanCurveUwU>>,
   instant: Instant,
   first_time: FirstTime,
   text: String,
@@ -123,17 +137,21 @@ impl FanService {
     let Ok(fan_count) = self.device()?.num_fans() else { return Err("Failed to get num_fans from device in service_fans()")? };
     let Ok(gpu_idx) = TemperatureSensor::try_from(self.card_idx.unwrap()) else { return Err("Failed to convert device index to TemperatureSensor enum in service_fans()")? };
     let Ok(temp) = self.device()?.temperature(gpu_idx) else { return Err("Failed to get temperature reading from device in service_fans()")? };
-    let n: usize = self.curve.points.len();
-    for ts in 0..n {
-      if temp >= self.curve.points[ts].temp() {
-        for idx in 0..fan_count {
-          if self.device()?.fan_speed(idx)? != self.curve.points[ts].speed() {
-            let spd: u32 = self.curve.points[ts].speed();
-            self.device()?.set_fan_speed(idx, spd)?;
+    if let (Ok(curve), Ok(device)) = (self.curve.clone().lock(), self.device()) {
+      let n: usize = curve.points.len();
+      for ts in (0..n).rev() {
+        if let Ok(temp_speed) = curve.points[ts].clone().lock() {
+          if temp as i32 >= temp_speed.temp() {
+            for idx in 0..fan_count {
+              if device.fan_speed(idx)? != temp_speed.speed() {
+                let spd: u32 = temp_speed.speed();
+                if !DRY_RUN { device.set_fan_speed(idx, spd)?; }
+              }
+            }
+            self.text = format!("  Temp: {:>2}C, Fan Speed: {:>3}%  ", temp, temp_speed.speed());
+            return Ok(());
           }
         }
-        self.text = format!("  Temp: {}C, Fan Speed: {:>3}%  ", temp, self.curve.points[ts].speed());
-        return Ok(());
       }
     }
     Err("Nothing happened, I swear!")?
@@ -195,8 +213,9 @@ fn init_nvml_so() -> Result<Nvml, NvmlError> {
         let ver = res[1].to_owned();
         println!("Found nVidia driver version: {}", ver);
         let libname = format!("libnvidia-ml.so.{}", ver);
+        let libpath = format!("/usr/lib64/{}", &libname);
         println!("Initializing with {}", &libname);
-        let init_result = Nvml::builder().lib_path(OsStr::new(&libname)).init();
+        let init_result = Nvml::builder().lib_path(OsStr::new(&libpath)).init();
         if init_result.is_ok() { return init_result }
       }
     } else {
@@ -209,20 +228,22 @@ fn init_nvml_so() -> Result<Nvml, NvmlError> {
   }
   
   let libname = "libnvidia-ml.so.1".to_owned();
+  let libpath = format!("/usr/lib64/{}", &libname);
   println!("Attempting to use {} as our NVML Library.", libname);
-  let init_result = Nvml::builder().lib_path(OsStr::new(&libname)).init();
+  let init_result = Nvml::builder().lib_path(OsStr::new(&libpath)).init();
   return init_result
 }
 
-struct TempSpeed(u32,u32);
+struct TempSpeed(i32,u32);
 impl TempSpeed {
-  fn temp(&self) -> u32 { self.0 }
+  fn temp(&self) -> i32 { self.0 }
   fn speed(&self) -> u32 { self.1 }
+  fn update_temp(&mut self, temp: i32) { self.0 = temp; }
   fn update_speed(&mut self, speed: u32) { self.1 = speed; }
 }
-impl TryFrom<(u32,u32)> for TempSpeed {
+impl TryFrom<(i32,u32)> for TempSpeed {
   type Error = &'static str;
-  fn try_from(value: (u32,u32)) -> Result<Self, Self::Error> {
+  fn try_from(value: (i32,u32)) -> Result<Self, Self::Error> {
     if !(5..=95).contains(&value.0) {
       Err("Temperature must be between 5C and 95C")
     } else if !(0..=100).contains(&value.1) {
@@ -234,26 +255,54 @@ impl TryFrom<(u32,u32)> for TempSpeed {
 }
 
 struct FanCurveUwU { // For the theme. I'm sorry.
-  points: Vec<TempSpeed>,
+  points: Vec<Arc<Mutex<TempSpeed>>>,
 }
 impl FanCurveUwU {
   fn new() -> Self { Self{ points: Vec::new() } }
-  fn add(&mut self, temp: u32, speed: u32) -> Result<(), Box<dyn Error>> {
+  fn add(&mut self, temp: i32, speed: u32) -> Result<(), Box<dyn Error>> {
     let ts: TempSpeed = (temp,speed).try_into()?;
+    let ts = Arc::new(Mutex::new(ts));
     if self.points.is_empty() { self.points.push(ts); return Ok(()) }
     for i in 0..self.points.len() {
-      if self.points[i].temp() > temp { continue }
-      if self.points[i].temp() < temp {
-        if i + 1 == self.points.len() {
-          self.points.push(ts); return Ok(())
-        } else {
-          self.points.insert(i, ts); return Ok(())
+      if let Ok(temp_speed) = self.points[i].clone().lock().as_mut() {
+        if temp > temp_speed.temp() { continue }
+        if temp_speed.temp() == temp {
+          temp_speed.update_speed(speed); return Ok(())
+        }
+        if temp < temp_speed.temp() {
+          if i + 1 == self.points.len() {
+            self.points.push(ts); return Ok(())
+          } else {
+            self.points.insert(i, ts); return Ok(())
+          }
         }
       }
-      if self.points[i].temp() == temp { self.points[i].update_speed(speed); }
     }
     self.points.push(ts);
     Ok(())
+  }
+  fn fan_curve_view(&self) -> Panel<LinearLayout> {
+    let mut ll = LinearLayout::horizontal();
+    if self.points.is_empty() { return Panel::new(LinearLayout::horizontal()) }
+    for i in 0..self.points.len() {
+      let temp_speed_clone = self.points[i].clone();
+      if let Ok(temp_speed) = self.points[i].lock() {
+        ll.add_child(
+          FanCurveUnitView::new(temp_speed.temp(),temp_speed.speed())
+            .on_change(move |_, slider_temp, slider_speed| {
+              if let Ok(temp_speed) = temp_speed_clone.lock().as_mut() {
+                if temp_speed.temp() != slider_temp {
+                  temp_speed.update_temp(slider_temp);
+                }
+                if temp_speed.speed() != slider_speed {
+                  temp_speed.update_speed(slider_speed);
+                }
+              }
+            })
+        )
+      }
+    }
+    Panel::new(ll)
   }
 }
 
