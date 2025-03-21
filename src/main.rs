@@ -84,7 +84,21 @@ fn main() -> Result<(), Box<dyn Error>> {
       )
     ).on_event(Event::Refresh, move |s| refresh_callback(s, content.clone())));
   }
-  siv.add_global_callback('q', |s| s.quit());
+  siv.add_global_callback('q', |s| {
+    s.with_user_data(|fs: &mut FanService| {
+      let fan_count: u32 = fs.device()
+          .expect("Failed to get num_fans from Device while attempting to return control to hardware fancurve.")
+          .num_fans()
+          .expect("Failed to get number of fans from device while attempting to return control to hardware fancurve.");
+      for idx in 0..fan_count {
+        fs.device()
+          .expect("Failed to get Device while attempting to return control to hardware fancurve.")
+          .set_default_fan_speed(idx)
+            .expect("Failed to set default fan speed while closing.");
+      }
+    });
+    s.quit()
+  });
   siv.set_fps(10);
   siv.set_autorefresh(true);
   siv.run();
