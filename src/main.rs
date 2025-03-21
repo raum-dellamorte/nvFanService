@@ -137,7 +137,7 @@ impl FanService {
     let Ok(fan_count) = self.device()?.num_fans() else { return Err("Failed to get num_fans from device in service_fans()")? };
     let Ok(gpu_idx) = TemperatureSensor::try_from(self.card_idx.unwrap()) else { return Err("Failed to convert device index to TemperatureSensor enum in service_fans()")? };
     let Ok(temp) = self.device()?.temperature(gpu_idx) else { return Err("Failed to get temperature reading from device in service_fans()")? };
-    if let (Ok(curve), Ok(device)) = (self.curve.clone().lock(), self.device()) {
+    if let (Ok(curve), Ok(mut device)) = (self.curve.clone().lock(), self.device()) {
       let n: usize = curve.points.len();
       for ts in (0..n).rev() {
         if let Ok(temp_speed) = curve.points[ts].clone().lock() {
