@@ -126,17 +126,7 @@ fn refresh_callback(siv: &mut Cursive, fan_info_text: TextContent) {
       hv.hide();
     }
   }
-  siv.with_user_data(|fs: &mut FanService| {
-    if fs.first_time.0 { // We don't want to wait 10 secs for our first service
-      fs.first_time.0 = false;
-      fs.service_service().unwrap();
-      return;
-    }
-    if fs.instant.elapsed().as_secs() >= 10 {
-      fs.service_service().unwrap();
-      fs.instant = Instant::now();
-    }
-  });
+  siv.with_user_data(timed_service_service);
   let txt: String = siv.user_data::<FanService>().unwrap().text.clone();
   if txt.len() > 0 { // This is probably not necessary, but neither was using Cursive
     fan_info_text.set_content(&txt);
