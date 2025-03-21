@@ -105,6 +105,18 @@ fn main() -> Result<(), Box<dyn Error>> {
   Ok(())
 }
 
+fn timed_service_service(fs: &mut FanService) {
+    if fs.first_time.0 { // We don't want to wait 10 secs for our first service
+      fs.first_time.0 = false;
+      fs.service_service().unwrap();
+      return;
+    }
+    if fs.instant.elapsed().as_secs() >= 10 {
+      fs.service_service().unwrap();
+      fs.instant = Instant::now();
+    }
+  }
+
 fn refresh_callback(siv: &mut Cursive, fan_info_text: TextContent) {
   let (_, height) = siv.screen_size().pair();
   if let Some(hv) = siv.find_name::<HideableView<Panel<LinearLayout>>>("SlidersHideable").as_mut() {
