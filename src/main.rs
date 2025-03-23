@@ -1,20 +1,20 @@
 #![allow(unused_braces)]
 use {
   arrayvec::ArrayString,
-  cursive::{
-    event::Event,
-    theme::Theme,
-    views::{
-      HideableView, LinearLayout, NamedView, OnEventView,
-      Panel, TextContent, TextView,
-    },
-    Cursive,
-    CursiveExt,
-    // XY,
-  },
-  cursive_core::style::{
-    BaseColor::*, Color::*, PaletteColor::*,
-  },
+  // cursive::{
+  //   event::Event,
+  //   theme::Theme,
+  //   views::{
+  //     HideableView, LinearLayout, NamedView, OnEventView,
+  //     Panel, TextContent, TextView,
+  //   },
+  //   Cursive,
+  //   CursiveExt,
+  //   // XY,
+  // },
+  // cursive_core::style::{
+  //   BaseColor::*, Color::*, PaletteColor::*,
+  // },
   nvml_wrapper::{
     device::Device, enum_wrappers::device::TemperatureSensor, error::NvmlError, Nvml,
   },
@@ -27,15 +27,25 @@ use {
     sync::{
       Arc, Mutex,
     },
-    time::Instant,
+    time::{
+      Duration,
+      Instant,
+    },
+  },
+  sdl3::{
+    rect::Rect,
+    // render::Texture,
+    pixels::Color,
+    event::Event,
+    keyboard::Keycode,
   },
   sudo,
-  crate::{
-    cursive_custom::FanCurveUnitView,
-  },
+  // crate::{
+  //   cursive_custom::FanCurveUnitView,
+  // },
 };
 
-mod cursive_custom;
+// mod cursive_custom;
 
 const DRY_RUN:bool = false; // Change me to a command line parameter like `--dry-run`
 
@@ -64,77 +74,130 @@ fn main() -> Result<(), Box<dyn Error>> {
     let _ = fan_service.device()?;
     fan_service.card_name.as_str().to_owned()
   };
-  let mut siv = Cursive::new();
-  let content = TextContent::new("  Temp: ??C, Fan Speed: ???%  ");
-  siv.set_user_data(fan_service);
-  siv.with_theme(|theme: &mut Theme| { // One day, this could be customized.
-    theme.palette[Background] = Dark(Black);
-    theme.palette[Shadow] = Rgb(30, 0, 0);
-    theme.palette[View] = Rgb(15, 25, 65);
-    theme.palette[Primary] = Rgb(0, 200, 0);
-    theme.palette[TitlePrimary] = Rgb(0, 100, 0);
-  });
-  if let Ok(curve) = curve.clone().lock() {
-    siv.add_layer(OnEventView::new(LinearLayout::vertical()
-      .child(
-        Panel::new( TextView::new_with_content(content.clone()) ).title(name)
-      )
-      .child(
-        NamedView::new("SlidersHideable",HideableView::new( curve.fan_curve_view() ))
-      )
-    ).on_event(Event::Refresh, move |s| refresh_callback(s, content.clone())));
-  }
-  siv.add_global_callback('q', |s| {
-    s.with_user_data(|fs: &mut FanService| {
-      let fan_count: u32 = fs.device()
-          .expect("Failed to get num_fans from Device while attempting to return control to hardware fancurve.")
-          .num_fans()
-          .expect("Failed to get number of fans from device while attempting to return control to hardware fancurve.");
-      for idx in 0..fan_count {
-        fs.device()
-          .expect("Failed to get Device while attempting to return control to hardware fancurve.")
-          .set_default_fan_speed(idx)
-            .expect("Failed to set default fan speed while closing.");
+  // let content = TextContent::new("  Temp: ??C, Fan Speed: ???%  ");
+  const BG : Color = Color::RGBA(0, 0, 0, 255);
+  const SHADOW : Color = Color::RGBA(30, 0, 0, 255);
+  const VIEW : Color = Color::RGBA(15, 25, 65, 255);
+  const PRIMARY : Color = Color::RGBA(0, 200, 0, 255);
+  const TITLE : Color = Color::RGBA(0, 100, 0, 255);
+  
+  let sdl_context = sdl3::init().unwrap();
+  let ttf_context = sdl3::ttf::init().unwrap();
+  let fira = ttf_context.load_font("/usr/share/fonts/TTF/FiraCodeNerdFontMono-Regular.ttf", 26.0)
+    .expect("Couldn't load FiraCodeNerdFontMono Regular TTF");
+  let video_subsystem = sdl_context.video().unwrap();
+  let window = video_subsystem
+    .window("nvFanService UwU", 500, 300)
+    .position_centered()
+    .resizable()
+    .build()
+    .unwrap();
+  let mut canvas = window.into_canvas();
+  let texture_creator = canvas.texture_creator();
+  let mut event_pump = sdl_context.event_pump().unwrap();
+  
+  canvas.set_draw_color(Color::RGB(0, 255, 255));
+  canvas.clear();
+  canvas.present();
+  let mut i = 0; // For controlling when timed_service_service is run.
+  timed_service_service(&mut fan_service);
+  let txt_gfx_card = fira.render(&name).blended(PRIMARY).unwrap();
+  let txt_gfx_card_half_w: i32 = (txt_gfx_card.width() / 2) as i32;
+  let txt_region_gfx_card = Rect::new(
+    0,0,txt_gfx_card.width(),txt_gfx_card.height()
+  );
+  let mut txt_speed_and_temp = fira.render(&fan_service.text).blended(PRIMARY).unwrap();
+  let txt_speed_and_temp_half_w: i32 = (txt_speed_and_temp.width() / 2) as i32;
+  let txt_region_speed_and_temp = Rect::new(
+    0,0,txt_speed_and_temp.width(),txt_speed_and_temp.height()
+  );
+  'running: loop {
+    // Check Events!
+    for event in event_pump.poll_iter() {
+      match event {
+        Event::Quit {..} |
+        Event::KeyDown { keycode: Some(Keycode::Escape), .. }
+        | Event::KeyDown { keycode: Some(Keycode::Q), .. } => {
+          break 'running
+        },
+        _ => {}
       }
-    });
-    s.quit()
-  });
-  siv.set_fps(10);
-  siv.set_autorefresh(true);
-  siv.run();
+    }
+    // Update!
+    i = (i + 1) % 10;
+    if i == 0 {
+      timed_service_service(&mut fan_service);
+      txt_speed_and_temp = fira.render(&fan_service.text).blended(PRIMARY).unwrap();
+    }
+    let tex_speed_and_temp = txt_speed_and_temp.as_texture(&texture_creator).unwrap();
+    let tex_gfx_card = txt_gfx_card.as_texture(&texture_creator).unwrap();
+    let canvas_rect = canvas.viewport();
+    let win_half_w: i32 = (canvas_rect.width() / 2) as i32;
+    let x_gfx_card = win_half_w - txt_gfx_card_half_w;
+    let x_speed_and_temp: i32 = win_half_w - txt_speed_and_temp_half_w;
+    let draw_pos_gfx_card = Rect::new(
+      x_gfx_card,20,txt_gfx_card.width(),txt_gfx_card.height()
+    );
+    let draw_pos_speed_and_temp = Rect::new(
+      x_speed_and_temp,40 + txt_gfx_card.height() as i32,
+      txt_speed_and_temp.width(),txt_speed_and_temp.height()
+    );
+    // Draw!
+    canvas.set_draw_color(BG);
+    canvas.clear();
+    canvas.copy(&tex_gfx_card, txt_region_gfx_card, draw_pos_gfx_card).unwrap();
+    canvas.copy(&tex_speed_and_temp, txt_region_speed_and_temp, draw_pos_speed_and_temp).unwrap();
+    // Present result!
+    canvas.present();
+    ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+  }
+  end_service_service(&mut fan_service);
   Ok(())
 }
 
 fn timed_service_service(fs: &mut FanService) {
-    if fs.first_time.0 { // We don't want to wait 10 secs for our first service
-      fs.first_time.0 = false;
-      fs.service_service().unwrap();
-      return;
-    }
-    if fs.instant.elapsed().as_secs() >= 10 {
-      fs.service_service().unwrap();
-      fs.instant = Instant::now();
-    }
+  if fs.first_time.0 { // We don't want to wait 10 secs for our first service
+    fs.first_time.0 = false;
+    fs.service_service().unwrap();
+    return;
   }
-
-fn refresh_callback(siv: &mut Cursive, fan_info_text: TextContent) {
-  let (_, height) = siv.screen_size().pair();
-  if let Some(hv) = siv.find_name::<HideableView<Panel<LinearLayout>>>("SlidersHideable").as_mut() {
-    if height > 17 { // Change me to a constant
-      hv.unhide();
-    } else {
-      hv.hide();
-    }
-  }
-  siv.with_user_data(timed_service_service);
-  let txt: String = siv.user_data::<FanService>().unwrap().text.clone();
-  if txt.len() > 0 { // This is probably not necessary, but neither was using Cursive
-    fan_info_text.set_content(&txt);
-  } else {
-    //                        "  Temp: __C, Fan Speed: ___%  " // Making sure error message is the same size
-    fan_info_text.set_content("FanService Fail: Empty String.");
+  if fs.instant.elapsed().as_secs() >= 10 {
+    fs.service_service().unwrap();
+    fs.instant = Instant::now();
   }
 }
+
+fn end_service_service(fs: &mut FanService) {
+  let fan_count: u32 = fs.device()
+    .expect("Failed to get num_fans from Device while attempting to return control to hardware fancurve.")
+    .num_fans()
+    .expect("Failed to get number of fans from device while attempting to return control to hardware fancurve.");
+  for idx in 0..fan_count {
+    fs.device()
+      .expect("Failed to get Device while attempting to return control to hardware fancurve.")
+      .set_default_fan_speed(idx)
+        .expect("Failed to set default fan speed while closing.");
+  }
+}
+
+// fn refresh_callback(siv: &mut Cursive, fan_info_text: TextContent) {
+//   let (_, height) = siv.screen_size().pair();
+//   if let Some(hv) = siv.find_name::<HideableView<Panel<LinearLayout>>>("SlidersHideable").as_mut() {
+//     if height > 17 { // Change me to a constant
+//       hv.unhide();
+//     } else {
+//       hv.hide();
+//     }
+//   }
+//   siv.with_user_data(timed_service_service);
+//   let txt: String = siv.user_data::<FanService>().unwrap().text.clone();
+//   if txt.len() > 0 { // This is probably not necessary, but neither was using Cursive
+//     fan_info_text.set_content(&txt);
+//   } else {
+//     //                        "  Temp: __C, Fan Speed: ___%  " // Making sure error message is the same size
+//     fan_info_text.set_content("FanService Fail: Empty String.");
+//   }
+// }
 
 struct FanService {
   nvml: Nvml,
@@ -297,29 +360,29 @@ impl FanCurveUwU {
     self.points.push(ts);
     Ok(())
   }
-  fn fan_curve_view(&self) -> Panel<LinearLayout> {
-    let mut ll = LinearLayout::horizontal();
-    if self.points.is_empty() { return Panel::new(LinearLayout::horizontal()) }
-    for i in 0..self.points.len() {
-      let temp_speed_clone = self.points[i].clone();
-      if let Ok(temp_speed) = self.points[i].lock() {
-        ll.add_child(
-          FanCurveUnitView::new(temp_speed.temp(),temp_speed.speed())
-            .on_change(move |_, slider_temp, slider_speed| {
-              if let Ok(temp_speed) = temp_speed_clone.lock().as_mut() {
-                if temp_speed.temp() != slider_temp {
-                  temp_speed.update_temp(slider_temp);
-                }
-                if temp_speed.speed() != slider_speed {
-                  temp_speed.update_speed(slider_speed);
-                }
-              }
-            })
-        )
-      }
-    }
-    Panel::new(ll)
-  }
+  // fn fan_curve_view(&self) -> Panel<LinearLayout> {
+  //   let mut ll = LinearLayout::horizontal();
+  //   if self.points.is_empty() { return Panel::new(LinearLayout::horizontal()) }
+  //   for i in 0..self.points.len() {
+  //     let temp_speed_clone = self.points[i].clone();
+  //     if let Ok(temp_speed) = self.points[i].lock() {
+  //       ll.add_child(
+  //         FanCurveUnitView::new(temp_speed.temp(),temp_speed.speed())
+  //           .on_change(move |_, slider_temp, slider_speed| {
+  //             if let Ok(temp_speed) = temp_speed_clone.lock().as_mut() {
+  //               if temp_speed.temp() != slider_temp {
+  //                 temp_speed.update_temp(slider_temp);
+  //               }
+  //               if temp_speed.speed() != slider_speed {
+  //                 temp_speed.update_speed(slider_speed);
+  //               }
+  //             }
+  //           })
+  //       )
+  //     }
+  //   }
+  //   Panel::new(ll)
+  // }
 }
 
 #[derive(Clone, Copy)]
