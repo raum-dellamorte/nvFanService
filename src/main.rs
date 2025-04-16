@@ -39,13 +39,17 @@ use {
     event::Event,
     keyboard::Keycode,
   },
-  sudo,
-  // crate::{
-  //   cursive_custom::FanCurveUnitView,
-  // },
+  crate::{
+    // cursive_custom::FanCurveUnitView,
+    elevate::elevate_if_needed,
+  },
 };
 
+#[macro_use]
+extern crate log;
+
 // mod cursive_custom;
+mod elevate;
 
 // Settings
 const DRY_RUN:bool = false; // Change me to a command line parameter like `--dry-run`
@@ -58,7 +62,7 @@ const SLIDER_KNOB : Color = Color::RGBA(0, 100, 60, 255);
 const SLIDER_TEMP_LABEL : Color = Color::RGBA(0, 60, 120, 255);
 
 fn main() -> Result<(), Box<dyn Error>> {
-  sudo::escalate_if_needed()?;
+  elevate_if_needed()?;
   let nvml = init_nvml_so()?;
   let mut curve = FanCurveUwU::new();
   curve.add(10,  0)?;
