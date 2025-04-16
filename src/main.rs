@@ -47,7 +47,15 @@ use {
 
 // mod cursive_custom;
 
+// Settings
 const DRY_RUN:bool = false; // Change me to a command line parameter like `--dry-run`
+// Colors
+const BG : Color = Color::RGBA(0, 0, 0, 255);
+const PRIMARY : Color = Color::RGBA(0, 200, 0, 255);
+const SLIDER_BG : Color = Color::RGBA(15, 25, 65, 255);
+const SLIDER_TRACK : Color = Color::RGBA(30, 10, 10, 255);
+const SLIDER_KNOB : Color = Color::RGBA(0, 100, 60, 255);
+const SLIDER_TEMP_LABEL : Color = Color::RGBA(0, 60, 120, 255);
 
 fn main() -> Result<(), Box<dyn Error>> {
   sudo::escalate_if_needed()?;
@@ -75,11 +83,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     fan_service.card_name.as_str().to_owned()
   };
   // let content = TextContent::new("  Temp: ??C, Fan Speed: ???%  ");
-  const BG : Color = Color::RGBA(0, 0, 0, 255);
-  const SHADOW : Color = Color::RGBA(30, 0, 0, 255);
-  const VIEW : Color = Color::RGBA(15, 25, 65, 255);
-  const PRIMARY : Color = Color::RGBA(0, 200, 0, 255);
-  const TITLE : Color = Color::RGBA(0, 100, 0, 255);
   
   let sdl_context = sdl3::init().unwrap();
   let ttf_context = sdl3::ttf::init().unwrap();
@@ -142,11 +145,74 @@ fn main() -> Result<(), Box<dyn Error>> {
       x_speed_and_temp,40 + txt_gfx_card.height() as i32,
       txt_speed_and_temp.width(),txt_speed_and_temp.height()
     );
+    let header_height = 60 + txt_gfx_card.height() + txt_speed_and_temp.height();
+    let draw_pos_slider_box = Rect::new(
+      10, header_height as i32,
+      canvas_rect.width() - 20, canvas_rect.height() - header_height - 10,
+    );
+    let mut sliders = Vec::new();
+    {
+      if let Ok(curve) = fan_service.curve.clone().lock() {
+        // for each point in the curve ake Rects to draw sliders
+        let count = curve.points.len() as u32;
+        let w = draw_pos_slider_box.width() - 10;
+        let x_offset = draw_pos_slider_box.x() + 5 + (w / count / 2) as i32;
+        for i in 0..count {
+          let slider_track = Rect::new(
+            x_offset + (i * w / count) as i32 - 4_i32,
+            draw_pos_slider_box.y() + 5,
+            8, draw_pos_slider_box.height() - 40,
+          );
+          let slider_label = Rect::new(
+            x_offset + (i * w / count) as i32 - 30_i32,
+            draw_pos_slider_box.y() + (draw_pos_slider_box.height() - 35) as i32,
+            60, 30,
+          );
+          if let Ok(ts) = curve.points[i as usize].lock() {
+            let speed = ts.speed();
+            let temp = ts.temp();
+            let spd_txt = format!("{:>3}%", speed);
+            let tmp_txt = format!("{:>3}C", temp);
+            let x = slider_track.x() - 26;
+            let y = slider_track.y() + (
+              (slider_track.height() as f32 - 30.0) / 100.0 * (100.0 - speed as f32)
+            ) as i32;
+            let slider_knob = Rect::new(x, y, 60, 30);
+            let tex_spd = fira.render(&spd_txt).blended(PRIMARY)
+              .unwrap()
+              .as_texture(&texture_creator)
+              .unwrap();
+            let tex_temp = fira.render(&tmp_txt).blended(PRIMARY)
+              .unwrap()
+              .as_texture(&texture_creator)
+              .unwrap();
+            sliders.push((slider_track, slider_knob, slider_label, tex_temp, tex_spd));
+          }
+        }
+      }
+      0
+    };
     // Draw!
     canvas.set_draw_color(BG);
     canvas.clear();
     canvas.copy(&tex_gfx_card, txt_region_gfx_card, draw_pos_gfx_card).unwrap();
     canvas.copy(&tex_speed_and_temp, txt_region_speed_and_temp, draw_pos_speed_and_temp).unwrap();
+    canvas.set_draw_color(SLIDER_BG);
+    canvas.fill_rect(draw_pos_slider_box).unwrap();
+    canvas.set_draw_color(SLIDER_TRACK);
+    for (slider_track, _, _, _, _) in &sliders {
+      canvas.fill_rect(*slider_track).unwrap();
+    }
+    canvas.set_draw_color(SLIDER_TEMP_LABEL);
+    for (_, _, slider_label, tex_tmp, _) in &sliders {
+      canvas.fill_rect(*slider_label).unwrap();
+      canvas.copy(tex_tmp, None, *slider_label).unwrap();
+    }
+    canvas.set_draw_color(SLIDER_KNOB);
+    for (_, slider_knob, _, _, tex_spd) in &sliders {
+      canvas.fill_rect(*slider_knob).unwrap();
+      canvas.copy(tex_spd, None, *slider_knob).unwrap();
+    }
     // Present result!
     canvas.present();
     ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
