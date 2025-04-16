@@ -216,6 +216,7 @@ impl FanService {
     let Ok(fan_count) = self.device()?.num_fans() else { return Err("Failed to get num_fans from device in service_fans()")? };
     let Ok(gpu_idx) = TemperatureSensor::try_from(self.card_idx.unwrap()) else { return Err("Failed to convert device index to TemperatureSensor enum in service_fans()")? };
     let Ok(temp) = self.device()?.temperature(gpu_idx) else { return Err("Failed to get temperature reading from device in service_fans()")? };
+    #[allow(unused_mut)]
     if let (Ok(curve), Ok(mut device)) = (self.curve.clone().lock(), self.device()) {
       let n: usize = curve.points.len();
       for ts in (0..n).rev() {
@@ -317,7 +318,9 @@ struct TempSpeed(i32,u32);
 impl TempSpeed {
   fn temp(&self) -> i32 { self.0 }
   fn speed(&self) -> u32 { self.1 }
+  #[allow(dead_code)]
   fn update_temp(&mut self, temp: i32) { self.0 = temp; }
+  #[allow(dead_code)]
   fn update_speed(&mut self, speed: u32) { self.1 = speed; }
 }
 impl TryFrom<(i32,u32)> for TempSpeed {
