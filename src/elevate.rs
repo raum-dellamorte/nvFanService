@@ -136,19 +136,32 @@ pub fn with_env(prefixes: &[&str]) -> Result<RunningAs, Box<dyn Error>> {
   } else {
     Command::new("/usr/bin/pkexec")
   };
-  if !is_terminal {
+  {
     // This section is from vangork/elevated-command
     let display = env::var("DISPLAY");
     let xauthority = env::var("XAUTHORITY");
+    let xdg_session_type = env::var("XDG_SESSION_TYPE");
+    let xdg_runtime_dir = env::var("XDG_RUNTIME_DIR");
     let home = env::var("HOME");
     
-    if display.is_ok() || xauthority.is_ok() || home.is_ok() {
+    if display.is_ok() || 
+      xauthority.is_ok() || 
+      xdg_session_type.is_ok() || 
+      xdg_runtime_dir.is_ok() || 
+      home.is_ok() 
+    {
       command.arg("env");
       if let Ok(display) = display {
         command.arg(format!("DISPLAY={}", display));
       }
       if let Ok(xauthority) = xauthority {
         command.arg(format!("XAUTHORITY={}", xauthority));
+      }
+      if let Ok(xdg_session_type) = xdg_session_type {
+        command.arg(format!("XDG_SESSION_TYPE={}", xdg_session_type));
+      }
+      if let Ok(xdg_runtime_dir) = xdg_runtime_dir {
+        command.arg(format!("XDG_RUNTIME_DIR={}", xdg_runtime_dir));
       }
       if let Ok(home) = home {
         command.arg(format!("HOME={}", home));

@@ -88,13 +88,18 @@ fn main() -> Result<(), Box<dyn Error>> {
   };
   // let content = TextContent::new("  Temp: ??C, Fan Speed: ???%  ");
   
+  if let Ok(session) = ::std::env::var("XDG_SESSION_TYPE") {
+    if session == "wayland" {
+      ::std::env::set_var("SDL_VIDEODRIVER", "wayland");
+    }
+  }
   let sdl_context = sdl3::init().unwrap();
   let ttf_context = sdl3::ttf::init().unwrap();
   let fira = ttf_context.load_font("/usr/share/fonts/TTF/FiraCodeNerdFontMono-Regular.ttf", 26.0)
     .expect("Couldn't load FiraCodeNerdFontMono Regular TTF");
   let video_subsystem = sdl_context.video().unwrap();
   let window = video_subsystem
-    .window("nvFanService UwU", 500, 300)
+    .window("nvFanService UwU", 500, 400)
     .position_centered()
     .resizable()
     .build()
