@@ -33,11 +33,12 @@ use {
     },
   },
   sdl3::{
-    rect::Rect,
-    // render::Texture,
-    pixels::Color,
     event::Event,
     keyboard::Keycode,
+    pixels::Color,
+    rect::Rect,
+    // render::Texture,
+    surface::Surface,
   },
   crate::{
     // cursive_custom::FanCurveUnitView,
