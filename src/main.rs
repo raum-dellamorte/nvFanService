@@ -34,6 +34,7 @@ use {
   },
   sdl3::{
     event::Event,
+    image::LoadSurface,
     keyboard::Keycode,
     pixels::Color,
     rect::Rect,
@@ -101,13 +102,15 @@ fn main() -> Result<(), Box<dyn Error>> {
   let ttf_context = sdl3::ttf::init().unwrap();
   let fira = ttf_context.load_font("/usr/share/fonts/TTF/FiraCodeNerdFontMono-Regular.ttf", 26.0)
     .expect("Couldn't load FiraCodeNerdFontMono Regular TTF");
+  let window_icon = Surface::from_file("res/nvfanservice.png")?;
   let video_subsystem = sdl_context.video().unwrap();
-  let window = video_subsystem
+  let mut window = video_subsystem
     .window("nvFanService UwU", 500, 400)
     .position_centered()
     .resizable()
     .build()
     .unwrap();
+  window.set_icon(window_icon);
   let mut canvas = window.into_canvas();
   let texture_creator = canvas.texture_creator();
   let mut event_pump = sdl_context.event_pump().unwrap();
