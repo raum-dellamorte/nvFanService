@@ -1,11 +1,17 @@
 # nvFanService
+
 ### Running Wayland and can't use GreenWithEnvy? Relax. Raum brings Fan Service to your nVidia GPU.
+
 No promises. But it just may work.
 
-![nvFanService-example](nvFanService-example.png)
-![nvFanService-example2](nvFanService-example2.png)
+![nvFanService-sdl3-example1](nvFanService-sdl3-example1.png)
+
+## Compiling:
+
+On Arch, you'll need extra/sdl3, aur/sdl3_ttf, and aur/sdl3_image to compile. I guess sdl3 is too new for everything to be on the main repo? Patience, Iago. I assume you'll need to find the equivalent packages on other distros, perhaps even as dev packages, IDK. One day I'll find out and make specific notes.
 
 ## Currently:
+
 - Starting temperature/fan speed curve is hard coded
   - Fan curves (UwU) are now partially configurable with a series of sliders
   - Number of sliders and their temperatures are not yet configurable
@@ -20,14 +26,16 @@ No promises. But it just may work.
   - Side note, it's possible we should be setting the fans back to default on exit and I have not yet looked into this.  I don't know if manually set speeds have a timeout or if I set it to 30% manually it just stays at 30% until told otherwise. So... use at your own risk and whatnot. I've been running the update loop for a couple of days with no instability, and when BG3 gets going, those fans go right to the top. If you prefer the quiet, my hard coded settings may not be for you. I put almost no thought into them.
 
 ## Todo:
-- Need to finish fan curve customization.
-- Hard coded "fan curve" is bad and the current values are for testing purposes so I can hear it working
-  - [x] Made a kind of fan curve struct to pass to service_fans()... UwU
-  - [x] Said struct is a sorted list of (temp, speed) tuples
-  - [x] If there is enough room in the terminal, a "curve editor" is now displayed
-  - [ ] Need way to change temperature per slider
-  - [ ] Need a was to add/remove sliders (within reason)
-  - [ ] Sliders need better theme
-  - [ ] Currently we have fixed steps. I think we want to lerp speeds between temps
+
+The SDL3 version is coming along nicely, but the curve editor is nonfunctional.
+
+- Hard coded "fan curve" is bad and the current values are for testing purposes
+- Currently we have fixed steps. I think we want to lerp speeds between temps
+- Curve Editor
+  - [x] is now displayed
+  - [ ] make sliders draggable
+  - [ ] need way to change temperature per slider
+  - [ ] need a way to add/remove sliders (within reason)
+  - [ ] make prettier
 
 Good talk...
