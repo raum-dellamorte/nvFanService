@@ -7,10 +7,12 @@ edition = "2021"
 arrayvec = "0.7.4"
 # cursive = "0.21.1"
 # cursive_core = "0.4.6"
+image = "0.25.6"
 libc = "0.2.172"
 log = "0.4.27"
 nvml-wrapper = { git = "https://github.com/raum-dellamorte/nvml-wrapper.git" }
 # nvml-wrapper = "0.10.0"
 regex = "1.10.5"
-sdl3 = { version = "0.14.24", features = ["ttf","image"]}
+sdl3 = { version = "0.14.25", features = ["ttf","image"]}
+sdl3-sys = "0.4.7"
 # sudo = "0.6.0"

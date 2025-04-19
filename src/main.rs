@@ -15,6 +15,10 @@ use {
   // cursive_core::style::{
   //   BaseColor::*, Color::*, PaletteColor::*,
   // },
+  image::{
+    load_from_memory_with_format,
+    ImageFormat,
+  },
   nvml_wrapper::{
     device::Device, enum_wrappers::device::TemperatureSensor, error::NvmlError, Nvml,
   },
@@ -34,13 +38,13 @@ use {
   },
   sdl3::{
     event::Event,
-    image::LoadSurface,
     keyboard::Keycode,
     pixels::Color,
     rect::Rect,
     // render::Texture,
     surface::Surface,
   },
+  sdl3_sys::pixels::SDL_PixelFormat,
   crate::{
     // cursive_custom::FanCurveUnitView,
     elevate::elevate_if_needed,
@@ -97,12 +101,14 @@ fn main() -> Result<(), Box<dyn Error>> {
       ::std::env::set_var("SDL_VIDEODRIVER", "wayland");
     }
   }
+  // Don't keep display awake. OLED murder is wrong.
   ::std::env::set_var("SDL_VIDEO_ALLOW_SCREENSAVER", "1");
+  // Initialize sdl3
   let sdl_context = sdl3::init().unwrap();
   let ttf_context = sdl3::ttf::init().unwrap();
   let fira = ttf_context.load_font("/usr/share/fonts/TTF/FiraCodeNerdFontMono-Regular.ttf", 26.0)
     .expect("Couldn't load FiraCodeNerdFontMono Regular TTF");
-  let window_icon = Surface::from_file("res/nvfanservice.png")?;
+  // let window_icon = Surface::from_file("res/nvfanservice.png")?;
   let video_subsystem = sdl_context.video().unwrap();
   let mut window = video_subsystem
     .window("nvFanService UwU", 500, 400)
@@ -110,7 +116,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     .resizable()
     .build()
     .unwrap();
-  window.set_icon(window_icon);
+  let icon_bytes = include_bytes!("../res/nvfanservice.png");
+  let icon_data = load_from_memory_with_format(icon_bytes.as_ref(), ImageFormat::Png)?;
+  let mut icon_vec = icon_data.into_rgb8().into_raw().to_owned();
+  let icon_raw: &mut [u8] = &mut icon_vec;
+  let icon_surface = Surface::from_data(
+    icon_raw, 128, 128, 384, SDL_PixelFormat::RGB24.try_into()?
+  )?;
+  window.set_icon(icon_surface);
   let mut canvas = window.into_canvas();
   let texture_creator = canvas.texture_creator();
   let mut event_pump = sdl_context.event_pump().unwrap();
