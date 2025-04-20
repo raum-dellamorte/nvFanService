@@ -10,6 +10,8 @@ No promises. But it just may work.
 
 On Arch, you'll need extra/sdl3 and aur/sdl3_ttf to compile. I guess sdl3 is too new for everything to be on the main repo? Patience, Iago. I assume you'll need to find the equivalent packages on other distros, perhaps even as dev packages, IDK. One day I'll find out and make specific notes.
 
+Also, the font for the SDL3 version is hard coded to `"/usr/share/fonts/TTF/FiraCodeNerdFontMono-Regular.ttf"` and I imagine it will crash without that file. Can I... `include_bytes!()` the font file??? That would make it a compile dependency and not really solve anything, right? This needs to be dealt with somehow... Figure out the most common mono fonts, put them in a list by preference, then load the first one that exists?
+
 ## Currently:
 
 - Starting temperature/fan speed curve is hard coded
@@ -23,7 +25,7 @@ On Arch, you'll need extra/sdl3 and aur/sdl3_ttf to compile. I guess sdl3 is too
     - Therefore, setting speed to 1% across the board is bad
     - Hard coded fan curve is aggressive and potentially loud, but safe(TM)
     - Exiting the program returns control to firmware
-- ~~Using the Cursive crate, an ncurses panel is displayed wherein the temp and fan speed are displayed, refreshed every 10 seconds~~
+- This branch uses SDL3 and I may add a command line option like `--cli` to run the Cursive/ncurses version. ~~Using the Cursive crate, an ncurses panel is displayed wherein the temp and fan speed are displayed, refreshed every 10 seconds~~
   - I can envision a future in which one can use their own color theme from a file.
 - Testing: Tested recently on Arch, older versions on `Pop!_OS 22.04 LTS` and `Nobara 40` (Fedora 40 ala GloriusEggroll)
 - Uses elevate.rs, my derivative of the `sudo` crate, to relaunch as root
