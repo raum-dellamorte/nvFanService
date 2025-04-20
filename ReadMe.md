@@ -33,7 +33,10 @@ The SDL3 version is coming along nicely, but the curve editor is nonfunctional.
 - Currently we have fixed steps. I think we want to lerp speeds between temps
 - Curve Editor
   - [x] is now displayed
-  - [ ] make sliders draggable
+  - [x] sliders "slide"
+    - shadow knob appears with what fan speed would be at current mouse position
+    - left mouse button release sets fan speed to what is shown on the shadow knob
+    - you can effectively drag the knob; only shadow knob moves until button release
   - [ ] need way to change temperature per slider
   - [ ] need a way to add/remove sliders (within reason)
   - [ ] make prettier
