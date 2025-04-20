@@ -119,6 +119,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     .resizable()
     .build()
     .unwrap();
+  // load window icon
   let icon_bytes = include_bytes!("../res/nvfanservice.png");
   let icon_data = load_from_memory_with_format(icon_bytes.as_ref(), ImageFormat::Png)?;
   let mut icon_vec = icon_data.into_rgb8().into_raw().to_owned();
@@ -127,6 +128,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     icon_raw, 128, 128, 384, SDL_PixelFormat::RGB24.try_into()?
   )?;
   window.set_icon(icon_surface);
+  // create canvas
   let mut canvas = window.into_canvas();
   let texture_creator = canvas.texture_creator();
   let mut event_pump = sdl_context.event_pump().unwrap();
