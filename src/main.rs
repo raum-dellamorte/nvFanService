@@ -383,13 +383,29 @@ impl FanService {
       for ts in (0..n).rev() {
         if let Ok(temp_speed) = curve.points[ts].clone().lock() {
           if temp as i32 >= temp_speed.temp() {
+            let speed: u32;
+            if let Some(Ok(next_ts)) = 
+              if ts + 1 >= n { None } else {
+                Some(curve.points[ts + 1].lock())
+              }
+            {
+              let temp_now = temp as f32;
+              let atemp = temp_speed.temp() as f32;
+              let btemp = next_ts.temp() as f32;
+              let aspeed = temp_speed.speed() as f32;
+              let bspeed = next_ts.speed() as f32;
+              let temp_range = btemp - atemp;
+              let temp_diff_pct = (temp_now - atemp) / temp_range;
+              speed = (aspeed + (bspeed - aspeed) * temp_diff_pct) as u32;
+            } else {
+              speed = temp_speed.speed();
+            }
             for idx in 0..fan_count {
-              if device.fan_speed(idx)? != temp_speed.speed() {
-                let spd: u32 = temp_speed.speed();
-                if !DRY_RUN { device.set_fan_speed(idx, spd)?; }
+              if device.fan_speed(idx)? != speed {
+                if !DRY_RUN { device.set_fan_speed(idx, speed)?; }
               }
             }
-            self.text = format!("  Temp: {:>2}C, Fan Speed: {:>3}%  ", temp, temp_speed.speed());
+            self.text = format!("  Temp: {:>2}C, Fan Speed: {:>3}%  ", temp, speed);
             return Ok(());
           }
         }
