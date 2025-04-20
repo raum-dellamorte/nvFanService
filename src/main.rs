@@ -1,5 +1,6 @@
 #![allow(unused_braces)]
 use {
+  crate::elevate::elevate_if_needed,
   arrayvec::ArrayString,
   // cursive::{
   //   event::Event,
@@ -20,22 +21,12 @@ use {
     ImageFormat,
   },
   nvml_wrapper::{
-    device::Device, enum_wrappers::device::TemperatureSensor, error::NvmlError, Nvml,
+    device::Device,
+    enum_wrappers::device::TemperatureSensor,
+    error::NvmlError,
+    Nvml,
   },
   regex::Regex,
-  std::{
-    error::Error,
-    ffi::OsStr,
-    fs::read_to_string,
-    path::Path,
-    sync::{
-      Arc, Mutex,
-    },
-    time::{
-      Duration,
-      Instant,
-    },
-  },
   sdl3::{
     event::Event,
     keyboard::Keycode,
@@ -45,10 +36,19 @@ use {
     surface::Surface,
   },
   sdl3_sys::pixels::SDL_PixelFormat,
-  crate::{
-    // cursive_custom::FanCurveUnitView,
-    elevate::elevate_if_needed,
-  },
+  std::{
+    error::Error,
+    ffi::OsStr,
+    fs::read_to_string,
+    path::Path,
+    sync::{
+      Arc,
+      Mutex,
+    }, time::{
+      Duration,
+      Instant,
+    }
+  }
 };
 
 #[macro_use]
