@@ -8,7 +8,7 @@ No promises. But it just may work.
 
 ## Compiling:
 
-On Arch, you'll need extra/sdl3, aur/sdl3_ttf, and aur/sdl3_image to compile. I guess sdl3 is too new for everything to be on the main repo? Patience, Iago. I assume you'll need to find the equivalent packages on other distros, perhaps even as dev packages, IDK. One day I'll find out and make specific notes.
+On Arch, you'll need extra/sdl3 and aur/sdl3_ttf to compile. I guess sdl3 is too new for everything to be on the main repo? Patience, Iago. I assume you'll need to find the equivalent packages on other distros, perhaps even as dev packages, IDK. One day I'll find out and make specific notes.
 
 ## Currently:
 
