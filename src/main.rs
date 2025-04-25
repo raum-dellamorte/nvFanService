@@ -155,8 +155,8 @@ impl FanService {
               speed = temp_speed.speed();
             }
             for idx in 0..fan_count {
-              if device.fan_speed(idx)? != speed {
-                if !DRY_RUN { device.set_fan_speed(idx, speed)?; }
+              if device.fan_speed(idx)? != speed && !DRY_RUN {
+                device.set_fan_speed(idx, speed)?;
               }
             }
             self.text = format!("  Temp: {:>2}C, Fan Speed: {:>3}%  ", temp, speed);
@@ -171,39 +171,42 @@ impl FanService {
   fn device(&mut self) -> Result<Device, NvmlError> {
     if self.card_idx.is_some() { return self.nvml.device_by_index(self.card_idx.unwrap()) }
     let device_count = self.nvml.device_count().unwrap_or(0);
-    if device_count == 0 { return Err(NvmlError::NotFound) }
-    if device_count == 1 {
-      println!("Found one nVidia GPU.");
-      let device = self.nvml.device_by_index(0);
-      if device.is_ok() {
-        let name = device.as_ref().unwrap().name().unwrap_or("<Unable to get device name>".to_owned());
-        self.card_name.push_str(&name);
-        self.card_idx = Some(0);
-        println!("~> {}", &name);
-      }
-      return device;
-    } else if device_count > 1 {
-      println!("Found {} nVidia devices.\nPlease choose one:", device_count);
-      let mut devices = Vec::new();
-      for i in 0..device_count {
-        let device = self.nvml.device_by_index(i);
+    match device_count.cmp(&1) {
+      std::cmp::Ordering::Less => Err(NvmlError::NotFound),
+      std::cmp::Ordering::Equal => {
+        println!("Found one nVidia GPU.");
+        let device = self.nvml.device_by_index(0);
         if device.is_ok() {
           let name = device.as_ref().unwrap().name().unwrap_or("<Unable to get device name>".to_owned());
           self.card_name.push_str(&name);
-          println!("{} ~> {}", i + 1, &name);
-          devices.push((i, name));
+          self.card_idx = Some(0);
+          println!("~> {}", &name);
+        }
+        device
+      }
+      std::cmp::Ordering::Greater => {
+        println!("Found {} nVidia devices.\nPlease choose one:", device_count);
+        let mut devices = Vec::new();
+        for i in 0..device_count {
+          let device = self.nvml.device_by_index(i);
+          if device.is_ok() {
+            let name = device.as_ref().unwrap().name().unwrap_or("<Unable to get device name>".to_owned());
+            self.card_name.push_str(&name);
+            println!("{} ~> {}", i + 1, &name);
+            devices.push((i, name));
+          }
+        }
+        // fixme: defaulting to the first so I don't have to write a user prompt right now
+        println!("Picking a card not yet implemented.\nUsing first available card.");
+        if devices.is_empty() { 
+          Err(NvmlError::NotFound) // No Devices Found
+        } else {
+            self.card_idx = Some(devices[0].0);
+            self.card_name.push_str(&devices[0].1);
+            self.nvml.device_by_index(0) // Return first device found
         }
       }
-      // fixme: defaulting to the first so I don't have to write a user prompt right now
-      println!("Picking a card not yet implemented.\nUsing first available card.");
-      if devices.len() > 0 {
-        self.card_idx = Some(devices[0].0);
-        self.card_name.push_str(&devices[0].1);
-        return self.nvml.device_by_index(0);
-      }
-      return Err(NvmlError::NotFound);
     }
-    return Err(NvmlError::NotFound);
   }
 }
 
@@ -215,7 +218,7 @@ fn init_nvml_so() -> Result<Nvml, NvmlError> {
   println!("Default libnvidia-ml.so not found.");
   println!("Attempting to load libnvidia-ml.so.<current driver triple>");
   let file = Path::new("/proc/driver/nvidia/version");
-  if let Ok(true) = Path::try_exists(&file) {
+  if let Ok(true) = Path::try_exists(file) {
     let drv_ver_info = read_to_string(file).unwrap();
     let re: Regex = Regex::new(r"(?m)Kernel Module +(\d+\.\d+\.\d+)").unwrap();
     let captures = re.captures(&drv_ver_info);
@@ -242,7 +245,7 @@ fn init_nvml_so() -> Result<Nvml, NvmlError> {
   let libpath = format!("/usr/lib64/{}", &libname);
   println!("Attempting to use {} as our NVML Library.", libname);
   let init_result = Nvml::builder().lib_path(OsStr::new(&libpath)).init();
-  return init_result
+  init_result
 }
 
 struct TempSpeed(i32,u32);
