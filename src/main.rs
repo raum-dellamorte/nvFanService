@@ -34,21 +34,7 @@ const DRY_RUN:bool = false; // Change me to a command line parameter like `--dry
 
 fn main() -> Result<(), Box<dyn Error>> {
   elevate_if_needed()?;
-  let nvml = init_nvml_so()?;
-  let mut curve = FanCurveUwU::new();
-  curve.add(10,  0)?;
-  curve.add(20, 30)?;
-  curve.add(30, 60)?;
-  curve.add(36, 70)?;
-  curve.add(40, 80)?;
-  curve.add(52, 90)?;
-  curve.add(58,100)?;
-  let curve = Arc::new(Mutex::new(curve));
-  let mut fan_service = FanService {
-    nvml, card_idx: None, card_name: ArrayString::new(),
-    curve: curve.clone(), instant: Instant::now(), first_time: FirstTime(true),
-    text: "".to_owned(),
-  };
+  let mut fan_service = FanService::new()?;
   let card_name = { // Once we get the card name, we want to reuse it elsewhere.
     // If card_idx is None, as it is before we get here,
     // running fan_service.device()? picks the nVidia card
@@ -118,6 +104,24 @@ struct FanService {
   text: String,
 }
 impl FanService {
+  fn new() -> Result<FanService, Box<dyn Error>> {
+    let nvml = init_nvml_so()?;
+    let mut curve = FanCurveUwU::new();
+    curve.add(10,  0)?;
+    curve.add(20, 30)?;
+    curve.add(30, 60)?;
+    curve.add(36, 70)?;
+    curve.add(40, 80)?;
+    curve.add(52, 90)?;
+    curve.add(58,100)?;
+    let curve = Arc::new(Mutex::new(curve));
+    Ok(FanService {
+      nvml, card_idx: None, card_name: ArrayString::new(),
+      curve: curve.clone(), instant: Instant::now(), first_time: FirstTime(true),
+      text: "".to_owned(),
+    })
+  }
+
   // fn set_card_id(&mut self, idx: u32) { self.card_idx = Some(idx); }
   
   fn service_service(&mut self) -> Result<(), Box<dyn Error>> {
