@@ -47,10 +47,10 @@ pub fn nvfs_cursive_frontend(card_name: &str, fan_service: Arc<Mutex<FanService>
       .child(
         NamedView::new("SlidersHideable",HideableView::new( curve.view() ))
       )
-    ).on_event(Event::Refresh, move |s| refresh_callback(s, content.clone())));
+    ).on_event(Event::Refresh, move |siv| refresh_callback(siv, content.clone())));
   }
-  siv.add_global_callback('q', |s| {
-    s.with_user_data(|fs: &mut Arc<Mutex<FanService>>| {
+  siv.add_global_callback('q', |siv| {
+    siv.with_user_data(|fs: &mut Arc<Mutex<FanService>>| {
       if let Ok(fs) = fs.lock().as_mut() {
         let fan_count: u32 = fs.device()
             .expect("Failed to get num_fans from Device while attempting to return control to hardware fancurve.")
@@ -64,7 +64,7 @@ pub fn nvfs_cursive_frontend(card_name: &str, fan_service: Arc<Mutex<FanService>
         }
       }
     });
-    s.quit()
+    siv.quit()
   });
   siv.set_fps(10);
   siv.set_autorefresh(true);
@@ -200,8 +200,8 @@ mod cursive_custom {
     /// Chainable method to set the height.
     #[must_use]
     pub fn with_height(self, height: usize) -> Self {
-      self.with(|s| {
-        s.set_height(height);
+      self.with(|siv| {
+        siv.set_height(height);
       })
     }
     /// Gets the current height.
@@ -214,9 +214,9 @@ mod cursive_custom {
     /// Chainable variant.
     #[must_use]
     pub fn with_temp_min_max(self, min: i32, max: i32) -> Self {
-      self.with(|s| {
-        s.min_temp = min;
-        s.max_temp = max;
+      self.with(|siv| {
+        siv.min_temp = min;
+        siv.max_temp = max;
       })
     }
     /// Gets the curve point's current max temperature value.
@@ -231,9 +231,9 @@ mod cursive_custom {
     /// Chainable method to set the curve point's temperature and fan speed values.
     #[must_use]
     pub fn with_temp_speed(self, temp: i32, speed: u32) -> Self {
-      self.with(|s| {
-        s.temp = temp;
-        s.fan_speed = speed;
+      self.with(|siv| {
+        siv.temp = temp;
+        siv.fan_speed = speed;
       })
     }
     /// Gets the curve point's current temperature value.
@@ -259,7 +259,7 @@ mod cursive_custom {
     where
         F: Fn(&mut Cursive, i32, u32) + 'static + Send + Sync,
     {
-        self.with(|s| s.set_on_change(callback))
+        self.with(|siv| siv.set_on_change(callback))
     }
     
     /// Sets a callback to be called when the `<Enter>` key is pressed.
@@ -276,15 +276,15 @@ mod cursive_custom {
     where
         F: Fn(&mut Cursive, i32, u32) + 'static + Send + Sync,
     {
-        self.with(|s| s.set_on_enter(callback))
+        self.with(|siv| siv.set_on_enter(callback))
     }
     
     fn call_on_change(&self) -> EventResult {
       EventResult::Consumed(self.on_change.clone().map(|cb| {
         let slider_temp = self.temp;
         let slider_speed = self.fan_speed;
-        Callback::from_fn(move |s| {
-          cb(s, slider_temp, slider_speed);
+        Callback::from_fn(move |siv| {
+          cb(siv, slider_temp, slider_speed);
         })
       }))
     }
@@ -340,8 +340,8 @@ mod cursive_custom {
           let slider_temp = self.temp;
           let slider_speed = self.fan_speed;
           let cb = self.on_enter.clone().unwrap();
-          EventResult::with_cb(move |s| {
-            cb(s, slider_temp, slider_speed);
+          EventResult::with_cb(move |siv| {
+            cb(siv, slider_temp, slider_speed);
           })
         }
         Event::Mouse {
