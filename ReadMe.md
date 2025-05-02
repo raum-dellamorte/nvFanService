@@ -4,7 +4,14 @@
 
 No promises. But it just may work.
 
+Default SDL3 version:
+
 ![nvFanService-sdl3-example1](nvFanService-sdl3-example1.png)
+
+Terminal version using `ncurses` via `cursive` crate:
+
+![nvFanService-example](nvFanService-example.png)
+![nvFanService-example2](nvFanService-example2.png)
 
 ## Compiling:
 
@@ -25,7 +32,7 @@ Also, the font for the SDL3 version is hard coded to `"/usr/share/fonts/TTF/Fira
     - Therefore, setting speed to 1% across the board is bad
     - Hard coded fan curve is aggressive and potentially loud, but safe(TM)
     - Exiting the program returns control to firmware
-- This branch uses SDL3 and I may add a command line option like `--cli` to run the Cursive/ncurses version. ~~Using the Cursive crate, an ncurses panel is displayed wherein the temp and fan speed are displayed, refreshed every 10 seconds~~
+- Uses SDL3 by default but can be run in a terminal window with the command line option `cli`. This runs the Cursive/ncurses version, in which case, using the `cursive` crate, an ncurses panel is displayed in which the name of the card along with it's temp and fan speed are displayed, refreshed every 10 seconds~~
   - I can envision a future in which one can use their own color theme from a file.
 - Testing: Tested recently on Arch, older versions on `Pop!_OS 22.04 LTS` and `Nobara 40` (Fedora 40 ala GloriusEggroll)
 - Uses elevate.rs, my derivative of the `sudo` crate, to relaunch as root
