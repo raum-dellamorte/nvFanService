@@ -2,6 +2,7 @@
 use {
   crate::{
     FanService,
+    FanServiceArcMutex,
     timed_service_service,
   },
   image::{
@@ -18,6 +19,7 @@ use {
   sdl3_sys::pixels::SDL_PixelFormat,
   std::{
     error::Error,
+    sync::{ Arc, Mutex, },
     time::Duration,
   }
 };
@@ -33,7 +35,7 @@ const SLIDER_KNOB : Color = Color::RGBA(0, 100, 60, 255);
 const SHADOW_KNOB : Color = Color::RGBA(20, 80, 60, 255);
 const SLIDER_TEMP_LABEL : Color = Color::RGBA(0, 60, 120, 255);
 
-pub fn nvfs_sdl3_frontend(card_name: &str, fan_service: &mut FanService) -> Result<(), Box<dyn Error>> {
+pub fn nvfs_sdl3_frontend(card_name: &str, fan_service: Arc<Mutex<FanService>>) -> Result<(), Box<dyn Error>> {
   // SDL3 Setup
   // Prefer Wayland if available
   unsafe {
@@ -81,7 +83,7 @@ pub fn nvfs_sdl3_frontend(card_name: &str, fan_service: &mut FanService) -> Resu
   let txt_region_gfx_card = Rect::new(
     0,0,txt_gfx_card.width(),txt_gfx_card.height()
   );
-  let mut txt_speed_and_temp = fira.render(&fan_service.text).blended(PRIMARY).unwrap();
+  let mut txt_speed_and_temp = fira.render(&fan_service.text()).blended(PRIMARY).unwrap();
   let txt_speed_and_temp_half_w: i32 = (txt_speed_and_temp.width() / 2) as i32;
   let txt_region_speed_and_temp = Rect::new(
     0,0,txt_speed_and_temp.width(),txt_speed_and_temp.height()
@@ -112,8 +114,8 @@ pub fn nvfs_sdl3_frontend(card_name: &str, fan_service: &mut FanService) -> Resu
     // Update!
     i = (i + 1) % 10;
     if i == 0 {
-      timed_service_service(fan_service);
-      txt_speed_and_temp = fira.render(&fan_service.text).blended(PRIMARY).unwrap();
+      timed_service_service(fan_service.clone());
+      txt_speed_and_temp = fira.render(&fan_service.text()).blended(PRIMARY).unwrap();
     }
     let tex_speed_and_temp = txt_speed_and_temp.as_texture(&texture_creator).unwrap();
     let tex_gfx_card = txt_gfx_card.as_texture(&texture_creator).unwrap();
@@ -135,7 +137,7 @@ pub fn nvfs_sdl3_frontend(card_name: &str, fan_service: &mut FanService) -> Resu
     );
     let mut sliders = Vec::new();
     {
-      if let Ok(curve) = fan_service.curve.clone().lock() {
+      if let Ok(curve) = fan_service.curve().lock() {
         // for each point in the curve ake Rects to draw sliders
         let count = curve.points.len() as u32;
         let w = draw_pos_slider_box.width() - 10;

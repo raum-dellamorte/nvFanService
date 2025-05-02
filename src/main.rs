@@ -1,6 +1,7 @@
 #![allow(unused_braces)]
 use {
   crate::{
+    cursive_frontend::nvfs_cursive_frontend,
     elevate::elevate_if_needed,
     sdl3_frontend::nvfs_sdl3_frontend,
   },
@@ -13,6 +14,7 @@ use {
   },
   regex::Regex,
   std::{
+    env,
     error::Error,
     ffi::OsStr,
     fs::read_to_string,
@@ -26,6 +28,7 @@ use {
 extern crate log;
 
 // mod cursive_custom;
+mod cursive_frontend;
 mod elevate;
 mod sdl3_frontend;
 
@@ -35,7 +38,8 @@ const DRY_RUN:bool = false; // Change me to a command line parameter like `--dry
 fn main() -> Result<(), Box<dyn Error>> {
   elevate_if_needed()?;
   let mut fan_service = FanService::new()?;
-  let card_name = { // Once we get the card name, we want to reuse it elsewhere.
+  let card_name = { 
+    // Once we get the card name, we want to reuse it elsewhere.
     // If card_idx is None, as it is before we get here,
     // running fan_service.device()? picks the nVidia card
     // we're going to use and fills in fan_service.card_name
@@ -43,56 +47,46 @@ fn main() -> Result<(), Box<dyn Error>> {
     let _ = fan_service.device()?;
     fan_service.card_name.as_str().to_owned()
   };
-  // let content = TextContent::new("  Temp: ??C, Fan Speed: ???%  ");
-  timed_service_service(&mut fan_service);
-  let res = nvfs_sdl3_frontend(&card_name, &mut fan_service);
-  end_service_service(&mut fan_service);
+  let fan_service = Arc::new(Mutex::new(fan_service));
+  timed_service_service(fan_service.clone());
+  let args: Vec<String> = env::args().collect();
+  let res = if args.len() == 2 && &args[1] == "cli" {
+    nvfs_cursive_frontend(&card_name, fan_service.clone())
+  } else {
+    nvfs_sdl3_frontend(&card_name, fan_service.clone())
+  };
+  end_service_service(fan_service);
   res
 }
 
-fn timed_service_service(fs: &mut FanService) {
-  if fs.first_time.0 { // We don't want to wait 10 secs for our first service
-    fs.first_time.0 = false;
-    fs.service_service().unwrap();
-    return;
-  }
-  if fs.instant.elapsed().as_secs() >= 10 {
-    fs.service_service().unwrap();
-    fs.instant = Instant::now();
-  }
-}
-
-fn end_service_service(fs: &mut FanService) {
-  let fan_count: u32 = fs.device()
-    .expect("Failed to get num_fans from Device while attempting to return control to hardware fancurve.")
-    .num_fans()
-    .expect("Failed to get number of fans from device while attempting to return control to hardware fancurve.");
-  for idx in 0..fan_count {
-    fs.device()
-      .expect("Failed to get Device while attempting to return control to hardware fancurve.")
-      .set_default_fan_speed(idx)
-        .expect("Failed to set default fan speed while closing.");
+fn timed_service_service(fs: Arc<Mutex<FanService>>) {
+  if let Ok(fs) = fs.lock().as_mut() {
+    if fs.first_time.0 { // We don't want to wait 10 secs for our first service
+      fs.first_time.0 = false;
+      fs.service_service().unwrap();
+      return;
+    }
+    if fs.instant.elapsed().as_secs() >= 10 {
+      fs.service_service().unwrap();
+      fs.instant = Instant::now();
+    }
   }
 }
 
-// fn refresh_callback(siv: &mut Cursive, fan_info_text: TextContent) {
-//   let (_, height) = siv.screen_size().pair();
-//   if let Some(hv) = siv.find_name::<HideableView<Panel<LinearLayout>>>("SlidersHideable").as_mut() {
-//     if height > 17 { // Change me to a constant
-//       hv.unhide();
-//     } else {
-//       hv.hide();
-//     }
-//   }
-//   siv.with_user_data(timed_service_service);
-//   let txt: String = siv.user_data::<FanService>().unwrap().text.clone();
-//   if txt.len() > 0 { // This is probably not necessary, but neither was using Cursive
-//     fan_info_text.set_content(&txt);
-//   } else {
-//     //                        "  Temp: __C, Fan Speed: ___%  " // Making sure error message is the same size
-//     fan_info_text.set_content("FanService Fail: Empty String.");
-//   }
-// }
+fn end_service_service(fs: Arc<Mutex<FanService>>) {
+  if let Ok(fs) = fs.lock().as_mut() {
+    let fan_count: u32 = fs.device()
+      .expect("Failed to get num_fans from Device while attempting to return control to hardware fancurve.")
+      .num_fans()
+      .expect("Failed to get number of fans from device while attempting to return control to hardware fancurve.");
+    for idx in 0..fan_count {
+      fs.device()
+        .expect("Failed to get Device while attempting to return control to hardware fancurve.")
+        .set_default_fan_speed(idx)
+          .expect("Failed to set default fan speed while closing.");
+    }
+  }
+}
 
 struct FanService {
   nvml: Nvml,
@@ -121,7 +115,7 @@ impl FanService {
       text: "".to_owned(),
     })
   }
-
+  
   // fn set_card_id(&mut self, idx: u32) { self.card_idx = Some(idx); }
   
   fn service_service(&mut self) -> Result<(), Box<dyn Error>> {
@@ -214,6 +208,24 @@ impl FanService {
   }
 }
 
+pub trait FanServiceArcMutex {
+  fn text(&self) -> String;
+  fn curve(&self) -> Arc<Mutex<FanCurveUwU>>;
+}
+
+impl FanServiceArcMutex for Arc<Mutex<FanService>> {
+  fn text(&self) -> String {
+    if let Ok(fs) = self.lock() {
+      fs.text.to_owned()
+    } else {
+      "FanServiceArcMutex.text() Fail".to_owned()
+    }
+  }
+  fn curve(&self) -> Arc<Mutex<FanCurveUwU>> {
+    self.lock().unwrap().curve.clone()
+  }
+}
+
 fn init_nvml_so() -> Result<Nvml, NvmlError> {
   let init_result = Nvml::init();
   if init_result.is_ok() { return init_result }
@@ -274,7 +286,7 @@ impl TryFrom<(i32,u32)> for TempSpeed {
   }
 }
 
-struct FanCurveUwU { // For the theme. I'm sorry.
+pub struct FanCurveUwU { // For the theme. I'm sorry.
   points: Vec<Arc<Mutex<TempSpeed>>>,
 }
 impl FanCurveUwU {
@@ -301,29 +313,6 @@ impl FanCurveUwU {
     self.points.push(ts);
     Ok(())
   }
-  // fn fan_curve_view(&self) -> Panel<LinearLayout> {
-  //   let mut ll = LinearLayout::horizontal();
-  //   if self.points.is_empty() { return Panel::new(LinearLayout::horizontal()) }
-  //   for i in 0..self.points.len() {
-  //     let temp_speed_clone = self.points[i].clone();
-  //     if let Ok(temp_speed) = self.points[i].lock() {
-  //       ll.add_child(
-  //         FanCurveUnitView::new(temp_speed.temp(),temp_speed.speed())
-  //           .on_change(move |_, slider_temp, slider_speed| {
-  //             if let Ok(temp_speed) = temp_speed_clone.lock().as_mut() {
-  //               if temp_speed.temp() != slider_temp {
-  //                 temp_speed.update_temp(slider_temp);
-  //               }
-  //               if temp_speed.speed() != slider_speed {
-  //                 temp_speed.update_speed(slider_speed);
-  //               }
-  //             }
-  //           })
-  //       )
-  //     }
-  //   }
-  //   Panel::new(ll)
-  // }
 }
 
 #[derive(Clone, Copy)]
