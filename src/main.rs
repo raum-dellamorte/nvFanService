@@ -1,62 +1,45 @@
 #![allow(unused_braces)]
 use {
+  crate::{
+    cursive_frontend::nvfs_cursive_frontend,
+    elevate::elevate_if_needed,
+    sdl3_frontend::nvfs_sdl3_frontend,
+  },
   arrayvec::ArrayString,
-  cursive::{
-    event::Event,
-    theme::Theme,
-    views::{
-      HideableView, LinearLayout, NamedView, OnEventView,
-      Panel, TextContent, TextView,
-    },
-    Cursive,
-    CursiveExt,
-    // XY,
-  },
-  cursive_core::style::{
-    BaseColor::*, Color::*, PaletteColor::*,
-  },
   nvml_wrapper::{
-    device::Device, enum_wrappers::device::TemperatureSensor, error::NvmlError, Nvml,
+    device::Device,
+    enum_wrappers::device::TemperatureSensor,
+    error::NvmlError,
+    Nvml,
   },
   regex::Regex,
   std::{
+    env,
     error::Error,
     ffi::OsStr,
     fs::read_to_string,
     path::Path,
-    sync::{
-      Arc, Mutex,
-    },
+    sync::{ Arc, Mutex, },
     time::Instant,
-  },
-  sudo,
-  crate::{
-    cursive_custom::FanCurveUnitView,
-  },
+  }
 };
 
-mod cursive_custom;
+#[macro_use]
+extern crate log;
 
+// mod cursive_custom;
+mod cursive_frontend;
+mod elevate;
+mod sdl3_frontend;
+
+// Settings
 const DRY_RUN:bool = false; // Change me to a command line parameter like `--dry-run`
 
 fn main() -> Result<(), Box<dyn Error>> {
-  sudo::escalate_if_needed()?;
-  let nvml = init_nvml_so()?;
-  let mut curve = FanCurveUwU::new();
-  curve.add(10,  0)?;
-  curve.add(20, 30)?;
-  curve.add(30, 60)?;
-  curve.add(36, 70)?;
-  curve.add(40, 80)?;
-  curve.add(52, 90)?;
-  curve.add(58,100)?;
-  let curve = Arc::new(Mutex::new(curve));
-  let mut fan_service = FanService {
-    nvml, card_idx: None, card_name: ArrayString::new(),
-    curve: curve.clone(), instant: Instant::now(), first_time: FirstTime(true),
-    text: "".to_owned(),
-  };
-  let name = { // Once we get the card name, we want to reuse it elsewhere.
+  elevate_if_needed()?;
+  let mut fan_service = FanService::new()?;
+  let card_name = { 
+    // Once we get the card name, we want to reuse it elsewhere.
     // If card_idx is None, as it is before we get here,
     // running fan_service.device()? picks the nVidia card
     // we're going to use and fills in fan_service.card_name
@@ -64,57 +47,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     let _ = fan_service.device()?;
     fan_service.card_name.as_str().to_owned()
   };
-  let mut siv = Cursive::new();
-  let content = TextContent::new("  Temp: ??C, Fan Speed: ???%  ");
-  siv.set_user_data(fan_service);
-  siv.with_theme(|theme: &mut Theme| { // One day, this could be customized.
-    theme.palette[Background] = Dark(Black);
-    theme.palette[Shadow] = Rgb(30, 0, 0);
-    theme.palette[View] = Rgb(15, 25, 65);
-    theme.palette[Primary] = Rgb(0, 200, 0);
-    theme.palette[TitlePrimary] = Rgb(0, 100, 0);
-  });
-  if let Ok(curve) = curve.clone().lock() {
-    siv.add_layer(OnEventView::new(LinearLayout::vertical()
-      .child(
-        Panel::new( TextView::new_with_content(content.clone()) ).title(name)
-      )
-      .child(
-        NamedView::new("SlidersHideable",HideableView::new( curve.fan_curve_view() ))
-      )
-    ).on_event(Event::Refresh, move |s| refresh_callback(s, content.clone())));
-  }
-  siv.add_global_callback('q', |s| {
-    s.with_user_data(|fs: &mut FanService| {
-      let fan_count: u32 = fs.device()
-          .expect("Failed to get num_fans from Device while attempting to return control to hardware fancurve.")
-          .num_fans()
-          .expect("Failed to get number of fans from device while attempting to return control to hardware fancurve.");
-      for idx in 0..fan_count {
-        fs.device()
-          .expect("Failed to get Device while attempting to return control to hardware fancurve.")
-          .set_default_fan_speed(idx)
-            .expect("Failed to set default fan speed while closing.");
-      }
-    });
-    s.quit()
-  });
-  siv.set_fps(10);
-  siv.set_autorefresh(true);
-  siv.run();
-  Ok(())
+  let fan_service = Arc::new(Mutex::new(fan_service));
+  timed_service_service(fan_service.clone());
+  let args: Vec<String> = env::args().collect();
+  let res = if args.len() == 2 && &args[1] == "cli" {
+    nvfs_cursive_frontend(&card_name, fan_service.clone())
+  } else {
+    nvfs_sdl3_frontend(&card_name, fan_service.clone())
+  };
+  end_service_service(fan_service);
+  res
 }
 
-fn refresh_callback(siv: &mut Cursive, fan_info_text: TextContent) {
-  let (_, height) = siv.screen_size().pair();
-  if let Some(hv) = siv.find_name::<HideableView<Panel<LinearLayout>>>("SlidersHideable").as_mut() {
-    if height > 17 { // Change me to a constant
-      hv.unhide();
-    } else {
-      hv.hide();
-    }
-  }
-  siv.with_user_data(|fs: &mut FanService| {
+fn timed_service_service(fs: Arc<Mutex<FanService>>) {
+  if let Ok(fs) = fs.lock().as_mut() {
     if fs.first_time.0 { // We don't want to wait 10 secs for our first service
       fs.first_time.0 = false;
       fs.service_service().unwrap();
@@ -124,13 +70,21 @@ fn refresh_callback(siv: &mut Cursive, fan_info_text: TextContent) {
       fs.service_service().unwrap();
       fs.instant = Instant::now();
     }
-  });
-  let txt: String = siv.user_data::<FanService>().unwrap().text.clone();
-  if txt.len() > 0 { // This is probably not necessary, but neither was using Cursive
-    fan_info_text.set_content(&txt);
-  } else {
-    //                        "  Temp: __C, Fan Speed: ___%  " // Making sure error message is the same size
-    fan_info_text.set_content("FanService Fail: Empty String.");
+  }
+}
+
+fn end_service_service(fs: Arc<Mutex<FanService>>) {
+  if let Ok(fs) = fs.lock().as_mut() {
+    let fan_count: u32 = fs.device()
+      .expect("Failed to get num_fans from Device while attempting to return control to hardware fancurve.")
+      .num_fans()
+      .expect("Failed to get number of fans from device while attempting to return control to hardware fancurve.");
+    for idx in 0..fan_count {
+      fs.device()
+        .expect("Failed to get Device while attempting to return control to hardware fancurve.")
+        .set_default_fan_speed(idx)
+          .expect("Failed to set default fan speed while closing.");
+    }
   }
 }
 
@@ -144,25 +98,66 @@ struct FanService {
   text: String,
 }
 impl FanService {
+  fn new() -> Result<FanService, Box<dyn Error>> {
+    let nvml = init_nvml_so()?;
+    let mut curve = FanCurveUwU::new();
+    curve.add(10,  0)?;
+    curve.add(20, 30)?;
+    curve.add(30, 60)?;
+    curve.add(36, 70)?;
+    curve.add(40, 80)?;
+    curve.add(52, 90)?;
+    curve.add(58,100)?;
+    let curve = Arc::new(Mutex::new(curve));
+    Ok(FanService {
+      nvml, card_idx: None, card_name: ArrayString::new(),
+      curve: curve.clone(), instant: Instant::now(), first_time: FirstTime(true),
+      text: "".to_owned(),
+    })
+  }
+  
   // fn set_card_id(&mut self, idx: u32) { self.card_idx = Some(idx); }
   
   fn service_service(&mut self) -> Result<(), Box<dyn Error>> {
     // if the 1st GPU is not the one we want to control, can we TemperatureSensor::Gpu + 1 ???
-    let Ok(fan_count) = self.device()?.num_fans() else { return Err("Failed to get num_fans from device in service_fans()")? };
-    let Ok(gpu_idx) = TemperatureSensor::try_from(self.card_idx.unwrap()) else { return Err("Failed to convert device index to TemperatureSensor enum in service_fans()")? };
-    let Ok(temp) = self.device()?.temperature(gpu_idx) else { return Err("Failed to get temperature reading from device in service_fans()")? };
+    let Ok(fan_count) = self.device()?.num_fans() else {
+      return Err("Failed to get num_fans from device in service_fans()")?
+    };
+    let Ok(gpu_idx) = TemperatureSensor::try_from(self.card_idx.unwrap()) else {
+      return Err("Failed to convert device index to TemperatureSensor enum in service_fans()")?
+    };
+    let Ok(temp) = self.device()?.temperature(gpu_idx) else {
+      return Err("Failed to get temperature reading from device in service_fans()")?
+    };
+    #[allow(unused_mut)]
     if let (Ok(curve), Ok(mut device)) = (self.curve.clone().lock(), self.device()) {
       let n: usize = curve.points.len();
       for ts in (0..n).rev() {
         if let Ok(temp_speed) = curve.points[ts].clone().lock() {
           if temp as i32 >= temp_speed.temp() {
+            let speed: u32;
+            if let Some(Ok(next_ts)) = 
+              if ts + 1 >= n { None } else {
+                Some(curve.points[ts + 1].lock())
+              }
+            {
+              let temp_now = temp as f32;
+              let atemp = temp_speed.temp() as f32;
+              let btemp = next_ts.temp() as f32;
+              let aspeed = temp_speed.speed() as f32;
+              let bspeed = next_ts.speed() as f32;
+              let temp_range = btemp - atemp;
+              let temp_diff_pct = (temp_now - atemp) / temp_range;
+              speed = (aspeed + (bspeed - aspeed) * temp_diff_pct) as u32;
+            } else {
+              speed = temp_speed.speed();
+            }
             for idx in 0..fan_count {
-              if device.fan_speed(idx)? != temp_speed.speed() {
-                let spd: u32 = temp_speed.speed();
-                if !DRY_RUN { device.set_fan_speed(idx, spd)?; }
+              if device.fan_speed(idx)? != speed && !DRY_RUN {
+                device.set_fan_speed(idx, speed)?;
               }
             }
-            self.text = format!("  Temp: {:>2}C, Fan Speed: {:>3}%  ", temp, temp_speed.speed());
+            self.text = format!("  Temp: {:>2}C, Fan Speed: {:>3}%  ", temp, speed);
             return Ok(());
           }
         }
@@ -174,39 +169,60 @@ impl FanService {
   fn device(&mut self) -> Result<Device, NvmlError> {
     if self.card_idx.is_some() { return self.nvml.device_by_index(self.card_idx.unwrap()) }
     let device_count = self.nvml.device_count().unwrap_or(0);
-    if device_count == 0 { return Err(NvmlError::NotFound) }
-    if device_count == 1 {
-      println!("Found one nVidia GPU.");
-      let device = self.nvml.device_by_index(0);
-      if device.is_ok() {
-        let name = device.as_ref().unwrap().name().unwrap_or("<Unable to get device name>".to_owned());
-        self.card_name.push_str(&name);
-        self.card_idx = Some(0);
-        println!("~> {}", &name);
-      }
-      return device;
-    } else if device_count > 1 {
-      println!("Found {} nVidia devices.\nPlease choose one:", device_count);
-      let mut devices = Vec::new();
-      for i in 0..device_count {
-        let device = self.nvml.device_by_index(i);
+    match device_count.cmp(&1) {
+      std::cmp::Ordering::Less => Err(NvmlError::NotFound),
+      std::cmp::Ordering::Equal => {
+        println!("Found one nVidia GPU.");
+        let device = self.nvml.device_by_index(0);
         if device.is_ok() {
           let name = device.as_ref().unwrap().name().unwrap_or("<Unable to get device name>".to_owned());
           self.card_name.push_str(&name);
-          println!("{} ~> {}", i + 1, &name);
-          devices.push((i, name));
+          self.card_idx = Some(0);
+          println!("~> {}", &name);
+        }
+        device
+      }
+      std::cmp::Ordering::Greater => {
+        println!("Found {} nVidia devices.\nPlease choose one:", device_count);
+        let mut devices = Vec::new();
+        for i in 0..device_count {
+          let device = self.nvml.device_by_index(i);
+          if device.is_ok() {
+            let name = device.as_ref().unwrap().name().unwrap_or("<Unable to get device name>".to_owned());
+            self.card_name.push_str(&name);
+            println!("{} ~> {}", i + 1, &name);
+            devices.push((i, name));
+          }
+        }
+        // fixme: defaulting to the first so I don't have to write a user prompt right now
+        println!("Picking a card not yet implemented.\nUsing first available card.");
+        if devices.is_empty() { 
+          Err(NvmlError::NotFound) // No Devices Found
+        } else {
+            self.card_idx = Some(devices[0].0);
+            self.card_name.push_str(&devices[0].1);
+            self.nvml.device_by_index(0) // Return first device found
         }
       }
-      // fixme: defaulting to the first so I don't have to write a user prompt right now
-      println!("Picking a card not yet implemented.\nUsing first available card.");
-      if devices.len() > 0 {
-        self.card_idx = Some(devices[0].0);
-        self.card_name.push_str(&devices[0].1);
-        return self.nvml.device_by_index(0);
-      }
-      return Err(NvmlError::NotFound);
     }
-    return Err(NvmlError::NotFound);
+  }
+}
+
+pub trait FanServiceArcMutex {
+  fn text(&self) -> String;
+  fn curve(&self) -> Arc<Mutex<FanCurveUwU>>;
+}
+
+impl FanServiceArcMutex for Arc<Mutex<FanService>> {
+  fn text(&self) -> String {
+    if let Ok(fs) = self.lock() {
+      fs.text.to_owned()
+    } else {
+      "FanServiceArcMutex.text() Fail".to_owned()
+    }
+  }
+  fn curve(&self) -> Arc<Mutex<FanCurveUwU>> {
+    self.lock().unwrap().curve.clone()
   }
 }
 
@@ -218,7 +234,7 @@ fn init_nvml_so() -> Result<Nvml, NvmlError> {
   println!("Default libnvidia-ml.so not found.");
   println!("Attempting to load libnvidia-ml.so.<current driver triple>");
   let file = Path::new("/proc/driver/nvidia/version");
-  if let Ok(true) = Path::try_exists(&file) {
+  if let Ok(true) = Path::try_exists(file) {
     let drv_ver_info = read_to_string(file).unwrap();
     let re: Regex = Regex::new(r"(?m)Kernel Module +(\d+\.\d+\.\d+)").unwrap();
     let captures = re.captures(&drv_ver_info);
@@ -245,14 +261,16 @@ fn init_nvml_so() -> Result<Nvml, NvmlError> {
   let libpath = format!("/usr/lib64/{}", &libname);
   println!("Attempting to use {} as our NVML Library.", libname);
   let init_result = Nvml::builder().lib_path(OsStr::new(&libpath)).init();
-  return init_result
+  init_result
 }
 
 struct TempSpeed(i32,u32);
 impl TempSpeed {
   fn temp(&self) -> i32 { self.0 }
   fn speed(&self) -> u32 { self.1 }
+  #[allow(dead_code)]
   fn update_temp(&mut self, temp: i32) { self.0 = temp; }
+  #[allow(dead_code)]
   fn update_speed(&mut self, speed: u32) { self.1 = speed; }
 }
 impl TryFrom<(i32,u32)> for TempSpeed {
@@ -268,7 +286,7 @@ impl TryFrom<(i32,u32)> for TempSpeed {
   }
 }
 
-struct FanCurveUwU { // For the theme. I'm sorry.
+pub struct FanCurveUwU { // For the theme. I'm sorry.
   points: Vec<Arc<Mutex<TempSpeed>>>,
 }
 impl FanCurveUwU {
@@ -295,30 +313,8 @@ impl FanCurveUwU {
     self.points.push(ts);
     Ok(())
   }
-  fn fan_curve_view(&self) -> Panel<LinearLayout> {
-    let mut ll = LinearLayout::horizontal();
-    if self.points.is_empty() { return Panel::new(LinearLayout::horizontal()) }
-    for i in 0..self.points.len() {
-      let temp_speed_clone = self.points[i].clone();
-      if let Ok(temp_speed) = self.points[i].lock() {
-        ll.add_child(
-          FanCurveUnitView::new(temp_speed.temp(),temp_speed.speed())
-            .on_change(move |_, slider_temp, slider_speed| {
-              if let Ok(temp_speed) = temp_speed_clone.lock().as_mut() {
-                if temp_speed.temp() != slider_temp {
-                  temp_speed.update_temp(slider_temp);
-                }
-                if temp_speed.speed() != slider_speed {
-                  temp_speed.update_speed(slider_speed);
-                }
-              }
-            })
-        )
-      }
-    }
-    Panel::new(ll)
-  }
 }
 
 #[derive(Clone, Copy)]
 struct FirstTime(bool);
+
