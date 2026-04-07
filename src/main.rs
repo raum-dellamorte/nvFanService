@@ -2,7 +2,10 @@
 use {
   crate::{
     cursive_frontend::nvfs_cursive_frontend,
-    elevate::elevate_if_needed,
+    elevate::{
+      elevate_if_needed,
+      running_unpriviledged,
+    },
     sdl3_frontend::nvfs_sdl3_frontend,
   },
   arrayvec::ArrayString,
@@ -18,10 +21,11 @@ use {
     error::Error,
     ffi::OsStr,
     fs::read_to_string,
+    io::Write,
     path::Path,
     sync::{ Arc, Mutex, },
     time::Instant,
-  }
+  },
 };
 
 #[macro_use]
@@ -36,6 +40,10 @@ mod sdl3_frontend;
 const DRY_RUN:bool = false; // Change me to a command line parameter like `--dry-run`
 
 fn main() -> Result<(), Box<dyn Error>> {
+  if running_unpriviledged() {
+    // setup/check user config
+    // todo!("Implement user configuration setup")
+  }
   elevate_if_needed()?;
   let mut fan_service = FanService::new()?;
   let card_name = { 
@@ -63,11 +71,11 @@ fn timed_service_service(fs: Arc<Mutex<FanService>>) {
   if let Ok(fs) = fs.lock().as_mut() {
     if fs.first_time.0 { // We don't want to wait 10 secs for our first service
       fs.first_time.0 = false;
-      fs.service_service().unwrap();
+      if let Err(_e) = fs.service_service() {}; // ignore the error, most likely we are running unprivileged
       return;
     }
     if fs.instant.elapsed().as_secs() >= 10 {
-      fs.service_service().unwrap();
+      if let Err(_e) = fs.service_service() {}; // ignore the error, most likely we are running unprivileged
       fs.instant = Instant::now();
     }
   }
@@ -120,53 +128,68 @@ impl FanService {
   
   fn service_service(&mut self) -> Result<(), Box<dyn Error>> {
     // if the 1st GPU is not the one we want to control, can we TemperatureSensor::Gpu + 1 ???
-    let Ok(fan_count) = self.device()?.num_fans() else {
-      return Err("Failed to get num_fans from device in service_fans()")?
-    };
-    let Ok(gpu_idx) = TemperatureSensor::try_from(self.card_idx.unwrap()) else {
-      return Err("Failed to convert device index to TemperatureSensor enum in service_fans()")?
-    };
-    let Ok(temp) = self.device()?.temperature(gpu_idx) else {
-      return Err("Failed to get temperature reading from device in service_fans()")?
-    };
+    let gpu_idx = if self.device().is_ok() { 
+      let Ok(gpu_idx) = TemperatureSensor::try_from(self.card_idx.unwrap()) else {
+        return Err("Failed to convert device index to TemperatureSensor enum in service_fans()")?
+      };
+      gpu_idx.clone()
+    } else { return Err("service_service: Failed to get device.")? };
+    
+    let (fan_count, temp) = if let Ok(device) = &self.device() {
+      let Ok(fan_count) = device.num_fans() else {
+        return Err("Failed to get num_fans from device in service_fans()")?
+      };
+      let Ok(temp) = device.temperature(gpu_idx) else {
+        return Err("Failed to get temperature reading from device in service_fans()")?
+      };
+      // let gpu_idx = gpu_idx.cl
+      (fan_count, temp)
+    } else { return Err("This should be unreachable")? };
+    
     #[allow(unused_mut)]
     if let (Ok(curve), Ok(mut device)) = (self.curve.clone().lock(), self.device()) {
       let n: usize = curve.points.len();
       for ts in (0..n).rev() {
-        if let Ok(temp_speed) = curve.points[ts].clone().lock() {
-          if temp as i32 >= temp_speed.temp() {
-            let speed: u32;
-            if let Some(Ok(next_ts)) = 
-              if ts + 1 >= n { None } else {
-                Some(curve.points[ts + 1].lock())
-              }
-            {
-              let temp_now = temp as f32;
-              let atemp = temp_speed.temp() as f32;
-              let btemp = next_ts.temp() as f32;
-              let aspeed = temp_speed.speed() as f32;
-              let bspeed = next_ts.speed() as f32;
-              let temp_range = btemp - atemp;
-              let temp_diff_pct = (temp_now - atemp) / temp_range;
-              speed = (aspeed + (bspeed - aspeed) * temp_diff_pct) as u32;
-            } else {
-              speed = temp_speed.speed();
+        if let Ok(temp_speed) = curve.points[ts].clone().lock() 
+        && temp as i32 >= temp_speed.temp() {
+          let speed: u32;
+          if let Some(Ok(next_ts)) = 
+            if ts + 1 >= n { None } else {
+              Some(curve.points[ts + 1].lock())
             }
-            for idx in 0..fan_count {
-              if device.fan_speed(idx)? != speed && !DRY_RUN {
-                device.set_fan_speed(idx, speed)?;
-              }
-            }
-            self.text = format!("  Temp: {:>2}C, Fan Speed: {:>3}%  ", temp, speed);
-            return Ok(());
+          {
+            let temp_now = temp as f32;
+            let atemp = temp_speed.temp() as f32;
+            let btemp = next_ts.temp() as f32;
+            let aspeed = temp_speed.speed() as f32;
+            let bspeed = next_ts.speed() as f32;
+            let temp_range = btemp - atemp;
+            let temp_diff_pct = (temp_now - atemp) / temp_range;
+            speed = (aspeed + (bspeed - aspeed) * temp_diff_pct) as u32;
+          } else {
+            speed = temp_speed.speed();
           }
+          for idx in 0..fan_count {
+            if device.fan_speed(idx)? != speed && !DRY_RUN {
+              match device.set_fan_speed(idx, speed) {
+                Ok(_) => {}
+                Err(e) => {
+                  self.text = format!("  Temp: {:>2}C, Fan Speed: {:>3}%  ", temp, temp_speed.speed());
+                  return Err(format!("Can't set fan speed: {}", e))?
+                }
+              }
+            }
+          }
+          self.text = format!("  Temp: {:>2}C, Fan Speed: {:>3}%  ", temp, speed);
+          return Ok(());
         }
       }
     }
+    
     Err("Nothing happened, I swear!")?
   }
   
-  fn device(&mut self) -> Result<Device, NvmlError> {
+  fn device(&mut self) -> Result<Device<'_>, NvmlError> {
     if self.card_idx.is_some() { return self.nvml.device_by_index(self.card_idx.unwrap()) }
     let device_count = self.nvml.device_count().unwrap_or(0);
     match device_count.cmp(&1) {
@@ -174,8 +197,8 @@ impl FanService {
       std::cmp::Ordering::Equal => {
         println!("Found one nVidia GPU.");
         let device = self.nvml.device_by_index(0);
-        if device.is_ok() {
-          let name = device.as_ref().unwrap().name().unwrap_or("<Unable to get device name>".to_owned());
+        if let Ok(device) = &device {
+          let name = device.name().unwrap_or("<Unable to get device name>".to_owned());
           self.card_name.push_str(&name);
           self.card_idx = Some(0);
           println!("~> {}", &name);
@@ -187,8 +210,8 @@ impl FanService {
         let mut devices = Vec::new();
         for i in 0..device_count {
           let device = self.nvml.device_by_index(i);
-          if device.is_ok() {
-            let name = device.as_ref().unwrap().name().unwrap_or("<Unable to get device name>".to_owned());
+          if let Ok(device) = &device {
+            let name = device.name().unwrap_or("<Unable to get device name>".to_owned());
             self.card_name.push_str(&name);
             println!("{} ~> {}", i + 1, &name);
             devices.push((i, name));
@@ -317,4 +340,3 @@ impl FanCurveUwU {
 
 #[derive(Clone, Copy)]
 struct FirstTime(bool);
-
