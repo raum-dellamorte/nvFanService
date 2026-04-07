@@ -42,10 +42,17 @@ pub fn nvfs_sdl3_frontend(card_name: &str, fan_service: Arc<Mutex<FanService>>) 
     if let Ok(session) = ::std::env::var("XDG_SESSION_TYPE") {
       if session == "wayland" {
         ::std::env::set_var("SDL_VIDEODRIVER", "wayland");
+        // if let Ok(display) = ::std::env::var("WAYLAND_DISPLAY") {
+        //   if display != "wayland-0" { ::std::env::set_var("WAYLAND_DISPLAY", "wayland-0"); }
+        // } else {
+        //   println!("WAYLAND_DISPLAY not defined")
+        // }
       }
     }
     // Don't keep display awake. OLED murder is wrong.
     ::std::env::set_var("SDL_VIDEO_ALLOW_SCREENSAVER", "1");
+    // revisit: Glycin was breaking things
+    ::std::env::set_var("GDK_PIXBUF_USE_GLYCIN", "no");
   }
   // Initialize sdl3
   let sdl_context = sdl3::init().unwrap();
@@ -272,4 +279,3 @@ impl MouseData {
     self.is_current = true;
   }
 }
-
