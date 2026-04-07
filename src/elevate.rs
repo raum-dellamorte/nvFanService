@@ -61,12 +61,12 @@ pub fn running_unpriviledged() -> bool {
   matches!(check_privileges(), User)
 }
 
-#[cfg(unix)]
-/// Convenience function for calling stdin().is_terminal() with IsTerminal trait in scope
-fn is_terminal() -> bool {
-    use ::std::io::IsTerminal;
-    ::std::io::stdin().is_terminal()
-}
+// #[cfg(unix)]
+// /// Convenience function for calling stdin().is_terminal() with IsTerminal trait in scope
+// fn is_terminal() -> bool {
+//     use ::std::io::IsTerminal;
+//     ::std::io::stdin().is_terminal()
+// }
 
 #[cfg(unix)]
 /// Restart your program with `sudo` or `pkexec` if launched unprivileged.
