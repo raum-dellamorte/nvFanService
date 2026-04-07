@@ -46,36 +46,42 @@ use RunningAs::*;
 
 #[cfg(unix)]
 /// Check getuid() and geteuid() to learn about the configuration this program is running under
-pub fn check() -> RunningAs {
+pub fn check_privileges() -> RunningAs {
   let uid = unsafe { libc::getuid() };
   let euid = unsafe { libc::geteuid() };
-  
   match (uid, euid) {
     (0, 0) => Root,
     (_, 0) => Suid,
     (_, _) => User,
   }
-  //if uid == 0 { Root } else { User }
 }
 
 #[cfg(unix)]
+pub fn running_unpriviledged() -> bool {
+  matches!(check_privileges(), User)
+}
+
+#[cfg(unix)]
+/// Convenience function for calling stdin().is_terminal() with IsTerminal trait in scope
 fn is_terminal() -> bool {
     use ::std::io::IsTerminal;
     ::std::io::stdin().is_terminal()
 }
 
 #[cfg(unix)]
-/// Restart your program with `sudo` or `pkexec` if the user is not privileged enough.
+/// Restart your program with `sudo` or `pkexec` if launched unprivileged.
+/// User will be promted for password unless the system is otherwise configured.
 ///
 /// Activates SUID privileges when available
-///
+/// 
+/// Example use:
 /// ```
 /// # use std::error::Error;
 /// # fn main() -> Result<(), Box<dyn Error>> {
-/// #   if elevate::check() == elevate::RunningAs::Root {
+/// #   if elevate::check_privileges() == elevate::RunningAs::Root {
 ///       elevate::elevate_if_needed()?;
 /// #   } else {
-///       // the following gets only executed in privileged mode
+/// #     // the following is only executed when running with elevated privileges
 /// #     eprintln!("not actually testing");
 /// #   }
 /// #   Ok(())
@@ -83,28 +89,32 @@ fn is_terminal() -> bool {
 /// ```
 #[inline]
 pub fn elevate_if_needed() -> Result<RunningAs, Box<dyn Error>> {
-  with_env(&[])
+  elevate_with_env(&[])
 }
 
 #[cfg(unix)]
-/// Elevate privileges while maintaining RUST_BACKTRACE and selected environment variables (or none).
+/// Restart your program with `sudo` or `pkexec` if launched unprivileged.
+/// Include specified environment variables in addition to: DISPLAY, XAUTHORITY,
+/// XDG_SESSION_TYPE, XDG_RUNTIME_DIR, HOME, and RUST_BACKTRACE if they are defined.
+/// User will be promted for password unless the system is otherwise configured.
 ///
 /// Activates SUID privileges when available.
 ///
+/// Example use:
 /// ```
 /// # use std::error::Error;
 /// # fn main() -> Result<(), Box<dyn Error>> {
-/// #   if elevate::check() == elevate::RunningAs::Root {
-///       elevate::with_env(&["CARGO_", "MY_APP_"])?;
+/// #   if elevate::check_privileges() == elevate::RunningAs::Root {
+///       elevate::elevate_with_env(&["CARGO_", "MY_APP_"])?;
 /// #   } else {
-///       // the following gets only executed in privileged mode
+/// #     // the following gets only executed in privileged mode
 /// #     eprintln!("not actually testing");
 /// #   }
 /// #   Ok(())
 /// # }
 /// ```
-pub fn with_env(prefixes: &[&str]) -> Result<RunningAs, Box<dyn Error>> {
-  let current = check();
+pub fn elevate_with_env(prefixes: &[&str]) -> Result<RunningAs, Box<dyn Error>> {
+  let current = check_privileges();
   trace!("Running as {:?}", current);
   match current {
     Root => {
@@ -130,29 +140,29 @@ pub fn with_env(prefixes: &[&str]) -> Result<RunningAs, Box<dyn Error>> {
   {
     args[0] = absolute_path;
   }
-  let is_terminal = is_terminal();
-  let mut command: Command = if is_terminal {
-    Command::new("/usr/bin/sudo")
-  } else {
-    Command::new("/usr/bin/pkexec")
-  };
+  // let _is_terminal = is_terminal();
+  let mut command = Command::new("/usr/bin/pkexec");
   {
     // This section is from vangork/elevated-command
     let display = env::var("DISPLAY");
+    let wayland_display = env::var("WAYLAND_DISPLAY");
+    let wayland_debug = env::var("WAYLAND_DEBUG");
     let xauthority = env::var("XAUTHORITY");
     let xdg_session_type = env::var("XDG_SESSION_TYPE");
     let xdg_runtime_dir = env::var("XDG_RUNTIME_DIR");
+    let xdg_data_dirs = env::var("XDG_DATA_DIRS");
     let home = env::var("HOME");
     
-    if display.is_ok() || 
-      xauthority.is_ok() || 
-      xdg_session_type.is_ok() || 
-      xdg_runtime_dir.is_ok() || 
-      home.is_ok() 
     {
       command.arg("env");
       if let Ok(display) = display {
         command.arg(format!("DISPLAY={}", display));
+      }
+      if let Ok(wayland_display) = wayland_display {
+        command.arg(format!("WAYLAND_DISPLAY={}", wayland_display));
+      }
+      if let Ok(wayland_debug) = wayland_debug {
+        command.arg(format!("WAYLAND_DEBUG={}", wayland_debug));
       }
       if let Ok(xauthority) = xauthority {
         command.arg(format!("XAUTHORITY={}", xauthority));
@@ -163,14 +173,19 @@ pub fn with_env(prefixes: &[&str]) -> Result<RunningAs, Box<dyn Error>> {
       if let Ok(xdg_runtime_dir) = xdg_runtime_dir {
         command.arg(format!("XDG_RUNTIME_DIR={}", xdg_runtime_dir));
       }
+      if let Ok(xdg_data_dirs) = xdg_data_dirs {
+        command.arg(format!("XDG_DATA_DIRS={}", xdg_data_dirs));
+      }
       if let Ok(home) = home {
         command.arg(format!("HOME={}", home));
       }
+      // command.arg("GDK_PIXBUF_USE_GLYCIN=no".to_owned());
+      // command.arg("GTK_THEME=Adwaita".to_owned());
     }
   }
   
   // Always propagate RUST_BACKTRACE
-  if let Ok(trace) = std::env::var("RUST_BACKTRACE") {
+  if let Ok(trace) = env::var("RUST_BACKTRACE") {
     let value = match &*trace.to_lowercase() {
       "" => None,
       "1" | "true" => Some("1"),
@@ -198,6 +213,7 @@ pub fn with_env(prefixes: &[&str]) -> Result<RunningAs, Box<dyn Error>> {
     }
   }
   
+  println!("{:?}", command);
   let mut child = command.args(args).spawn().expect("failed to execute child");
   
   let ecode = child.wait().expect("failed to wait on child");
@@ -215,7 +231,7 @@ mod tests {
   
   #[test]
   fn it_works() {
-    let c = check();
+    let c = check_privileges();
     assert!(true, "{:?}", c);
   }
 }
