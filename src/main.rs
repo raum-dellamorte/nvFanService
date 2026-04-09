@@ -34,18 +34,18 @@ extern crate log;
 // mod cursive_custom;
 mod cursive_frontend;
 mod elevate;
+mod nvfs_config;
 mod sdl3_frontend;
 
 // Settings
 const DRY_RUN:bool = false; // Change me to a command line parameter like `--dry-run`
 
 fn main() -> Result<(), Box<dyn Error>> {
-  if running_unpriviledged() {
-    // setup/check user config
-    // todo!("Implement user configuration setup")
-  }
+  let as_root = !running_unpriviledged();
+  let conf = nvfs_config::get_or_create_config(as_root)?;
+  let curve = conf.fan_curve().try_into()?;
   elevate_if_needed()?;
-  let mut fan_service = FanService::new()?;
+  let mut fan_service = FanService::new(curve)?;
   let card_name = { 
     // Once we get the card name, we want to reuse it elsewhere.
     // If card_idx is None, as it is before we get here,
@@ -106,16 +106,8 @@ struct FanService {
   text: String,
 }
 impl FanService {
-  fn new() -> Result<FanService, Box<dyn Error>> {
+  fn new(curve: FanCurveUwU) -> Result<FanService, Box<dyn Error>> {
     let nvml = init_nvml_so()?;
-    let mut curve = FanCurveUwU::new();
-    curve.add(10,  0)?;
-    curve.add(20, 30)?;
-    curve.add(30, 60)?;
-    curve.add(36, 70)?;
-    curve.add(40, 80)?;
-    curve.add(52, 90)?;
-    curve.add(58,100)?;
     let curve = Arc::new(Mutex::new(curve));
     Ok(FanService {
       nvml, card_idx: None, card_name: ArrayString::new(),
@@ -296,7 +288,8 @@ impl TempSpeed {
   #[allow(dead_code)]
   fn update_speed(&mut self, speed: u32) { self.1 = speed; }
 }
-impl TryFrom<(i32,u32)> for TempSpeed {
+struct TempSpeedArcMutex(Arc<Mutex<TempSpeed>>);
+impl TryFrom<(i32,u32)> for TempSpeedArcMutex {
   type Error = &'static str;
   fn try_from(value: (i32,u32)) -> Result<Self, Self::Error> {
     if !(5..=95).contains(&value.0) {
@@ -304,7 +297,7 @@ impl TryFrom<(i32,u32)> for TempSpeed {
     } else if !(0..=100).contains(&value.1) {
       Err("Fan speed must be between 0% and 100%")
     } else {
-      Ok(Self(value.0, value.1))
+      Ok(TempSpeedArcMutex(Arc::new(Mutex::new(TempSpeed(value.0, value.1)))))
     }
   }
 }
@@ -312,12 +305,12 @@ impl TryFrom<(i32,u32)> for TempSpeed {
 pub struct FanCurveUwU { // For the theme. I'm sorry.
   points: Vec<Arc<Mutex<TempSpeed>>>,
 }
+#[allow(dead_code)]
 impl FanCurveUwU {
   fn new() -> Self { Self{ points: Vec::new() } }
   fn add(&mut self, temp: i32, speed: u32) -> Result<(), Box<dyn Error>> {
-    let ts: TempSpeed = (temp,speed).try_into()?;
-    let ts = Arc::new(Mutex::new(ts));
-    if self.points.is_empty() { self.points.push(ts); return Ok(()) }
+    let ts: TempSpeedArcMutex = (temp,speed).try_into()?;
+    if self.points.is_empty() { self.points.push(ts.0); return Ok(()) }
     for i in 0..self.points.len() {
       if let Ok(temp_speed) = self.points[i].clone().lock().as_mut() {
         if temp > temp_speed.temp() { continue }
@@ -325,16 +318,24 @@ impl FanCurveUwU {
           temp_speed.update_speed(speed); return Ok(())
         }
         if temp < temp_speed.temp() {
-          if i + 1 == self.points.len() {
-            self.points.push(ts); return Ok(())
-          } else {
-            self.points.insert(i, ts); return Ok(())
-          }
+          self.points.insert(i, ts.0);
+          return Ok(());
         }
       }
     }
-    self.points.push(ts);
+    self.points.push(ts.0);
     Ok(())
+  }
+}
+impl TryFrom<Vec<(i32,u32)>> for FanCurveUwU {
+  type Error = &'static str;
+  fn try_from(list: Vec<(i32,u32)>) -> Result<Self, Self::Error> {
+    let mut points = Vec::new();
+    for tmpspd in list {
+      let ts: TempSpeedArcMutex = tmpspd.try_into()?;
+      points.push(ts.0);
+    }
+    Ok( Self { points } )
   }
 }
 
