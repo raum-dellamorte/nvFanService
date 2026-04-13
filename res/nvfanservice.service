@@ -1,0 +1,9 @@
+[Unit]
+Description=nvFanService for controlling nVidia GPU fan curve.
+After=graphical.target
+
+[Service]
+ExecStart=/usr/bin/nvfanservice
+
+[Install]
+WantedBy=graphical.target

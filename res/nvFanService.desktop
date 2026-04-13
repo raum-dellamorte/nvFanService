@@ -1,15 +1,13 @@
 [Desktop Entry]
 Categories=Utility;
 Comment=nVidia GPU Fan Curve Control
-Exec=~/.local/bin/nvfanservice
-GenericName=nvFanService
-Icon=~/.local/share/icons/nvfanservice.png
-MimeType=
 Name=nvFanService
+Exec=nvfanservice
+Icon=nvfanservice
 NoDisplay=false
-Path=~/.local/bin/
 StartupNotify=true
 StartupWMClass=nvfanservice
+MimeType=
 Terminal=false
 TerminalOptions=
 Type=Application

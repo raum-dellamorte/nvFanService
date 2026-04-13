@@ -3,8 +3,9 @@ use {
   crate::{
     timed_service_service,
     FanCurveUwU,
-    FanService,
+    // FanService,
     FanServiceArcMutex,
+    FanServiceClient,
   },
   cursive::{
     event::Event,
@@ -20,17 +21,26 @@ use {
   cursive_core::style::{
     BaseColor::*, Color::*, PaletteColor::*,
   },
+  futures::{
+    // executor::block_on,
+    SinkExt,
+  },
   std::{
     error::Error,
     sync::{ Arc, Mutex, },
     // time::Duration,
-  }
+  },
+  tokio::runtime::Runtime,
 };
 
-pub fn nvfs_cursive_frontend(card_name: &str, fan_service: Arc<Mutex<FanService>>) -> Result<(), Box<dyn Error>> {
+/// This frontend is currently broken. Likely migrating to Ratatui
+
+pub async fn nvfs_cursive_frontend(mut fan_service: FanServiceClient) -> Result<(), anyhow::Error> {
   let mut siv = Cursive::new();
   let content = TextContent::new("  Temp: ??C, Fan Speed: ???%  ");
+  let card_name = tokio::runtime::Handle::current().block_on(fan_service.request_card_name())?;
   let curve = fan_service.curve();
+  let fan_service = Arc::new(Mutex::new(fan_service));
   siv.set_user_data(fan_service);
   siv.with_theme(|theme: &mut Theme| { // One day, this could be customized.
     theme.palette[Background] = Dark(Black);
@@ -47,24 +57,12 @@ pub fn nvfs_cursive_frontend(card_name: &str, fan_service: Arc<Mutex<FanService>
       .child(
         NamedView::new("SlidersHideable",HideableView::new( curve.view() ))
       )
-    ).on_event(Event::Refresh, move |siv| refresh_callback(siv, content.clone())));
+    ).on_event(Event::Refresh, async move |siv| refresh_callback(siv, content.clone()).await));
   }
   siv.add_global_callback('q', |siv| {
-    siv.with_user_data(|fs: &mut Arc<Mutex<FanService>>| {
-      if let Ok(fs) = fs.lock().as_mut() {
-        let fan_count: u32 = fs.device()
-            .expect("Failed to get num_fans from Device while attempting to return control to hardware fancurve.")
-            .num_fans()
-            .expect("Failed to get number of fans from device while attempting to return control to hardware fancurve.");
-        for idx in 0..fan_count {
-          fs.device()
-            .expect("Failed to get Device while attempting to return control to hardware fancurve.")
-            .set_default_fan_speed(idx)
-              .expect("Failed to set default fan speed while closing.");
-        }
-      }
-    });
-    siv.quit()
+    let mut fsc = siv.user_data::<Arc<Mutex<FanServiceClient>>>().unwrap().clone();
+    let mut fs = fsc.lock().unwrap();
+    tokio::runtime::Handle::current().block_on(fs.connection.close()).expect("Failed to close connection");
   });
   siv.set_fps(10);
   siv.set_autorefresh(true);
@@ -73,7 +71,7 @@ pub fn nvfs_cursive_frontend(card_name: &str, fan_service: Arc<Mutex<FanService>
   Ok(())
 }
 
-fn refresh_callback(siv: &mut Cursive, fan_info_text: TextContent) {
+async fn refresh_callback(siv: &mut Cursive, fan_info_text: TextContent) {
   let (_, height) = siv.screen_size().pair();
   if let Some(hv) = siv.find_name::<HideableView<Panel<LinearLayout>>>("SlidersHideable").as_mut() {
     if height > 17 { // Change me to a constant
@@ -82,17 +80,15 @@ fn refresh_callback(siv: &mut Cursive, fan_info_text: TextContent) {
       hv.hide();
     }
   }
-  siv.with_user_data(|fs:&mut Arc<Mutex<FanService>>| {
-    let fs = fs.clone();
-    timed_service_service(fs);
-  });
-  let txt: String = siv.user_data::<Arc<Mutex<FanService>>>().unwrap().text();
-  if txt.is_empty() {
-    //                        "  Temp: __C, Fan Speed: ___%  " // Making sure error message is the same size
-    fan_info_text.set_content("FanService Fail: Empty String.");
-  } else { // This is probably not necessary, but neither was using Cursive
-    fan_info_text.set_content(&txt);
-  }
+  let txt = {
+    let mut fs = siv.user_data::<Arc<Mutex<FanServiceClient>>>().unwrap().lock().unwrap();
+    if let Ok((temp, speed)) = fs.request_tempspeed().await {
+      format!("  Temp: {:>2}C, Fan Speed: {:>3}%  ", temp, speed)
+    } else {
+      "No Response from FanService Server.".to_string()
+    }
+  };
+  fan_info_text.set_content(&txt);
 }
 
 pub trait CursiveView {

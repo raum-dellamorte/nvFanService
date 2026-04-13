@@ -1,5 +1,10 @@
 #![allow(dead_code)]
 use {
+  crate::{
+    elevate::running_unpriviledged,
+    FanCurveUwU,
+  },
+  anyhow::anyhow,
   kdl::{
     KdlDocument,
     // KdlEntry,
@@ -24,7 +29,10 @@ use {
     Parser,
   },
   platform_dirs::AppDirs,
-  std::path::PathBuf,
+  std::{
+    path::PathBuf,
+    sync::{Arc, Mutex,},
+  }
 };
 
 const CONFIG_KDL: &str =
@@ -42,7 +50,7 @@ fan_curve {
 
 // Create or acquire $HOME/.config/nvfanservice/nvfanservice.kdl
 #[allow(clippy::needless_return)] // 'return' statements make the intention more obvious.
-pub fn get_or_create_config(is_root: bool) -> Result<NvfsConfig, String> {
+pub fn get_or_create_config(is_root: bool) -> Result<NvfsConfig, anyhow::Error> {
   let app_name = Some("nvFanService");
   let config_file = "config.kdl";
   let mut path: PathBuf = if is_root {
@@ -53,27 +61,27 @@ pub fn get_or_create_config(is_root: bool) -> Result<NvfsConfig, String> {
     } else {
       let error = "Failed to get home directory. Cannot check for or create config file.".to_owned();
       log::info!("{}", error);
-      return Err(error)
+      return Err(anyhow!(error));
     }
   };
   if let Err(e) = std::fs::create_dir_all(&path) {
     let error = format!("Failed to create config dir: {}\nError: {}", path.display(), e);
     // log::error!("{}", error);
-    return Err(error);
+    return Err(anyhow!(error));
   }
   path.push(config_file);
   match std::fs::exists(&path) {
     Err(e)    => {
       let error = format!("Failed to check existence of config file: {}\nError: {}", path.display(), e);
       // log::error!("{}", error);
-      return Err(error);
+      return Err(anyhow!(error));
     }
     Ok(false) => {
       // The file does not exist, so we create it with the default config
       if let Err(e) = std::fs::write(&path, CONFIG_KDL) {
         let error = format!("Failed to write default config file: {}\nError: {}", path.display(), e);
         // log::error!("{}", error);
-        return Err(error);
+        return Err(anyhow!(error));
       };
       get_or_create_config(is_root)
     }
@@ -83,7 +91,7 @@ pub fn get_or_create_config(is_root: bool) -> Result<NvfsConfig, String> {
         Err(e) => {
           let error = format!("File exists but failed to read: {}\nError: {}", path.display(), e);
           // log::error!("{}", error);
-          return Err(error);
+          return Err(anyhow!(error));
         }
         Ok(conf) => {
           return validate_config(conf);
@@ -94,17 +102,79 @@ pub fn get_or_create_config(is_root: bool) -> Result<NvfsConfig, String> {
 }
 
 #[allow(clippy::needless_return)]
-fn validate_config(conf: String) -> Result<NvfsConfig, String> {
+fn validate_config(conf: String) -> Result<NvfsConfig, anyhow::Error> {
   let conf = &conf;
   let doc: Result<KdlDocument, KdlError> = conf.parse();
   match doc {
     Err(e) => {
       let error = format!("Failed to parse KDL:\n{}\n\nError: {}", conf, e);
       log::error!("{}", error);
-      Err(error)
+      Err(anyhow!(error))
     }
     Ok(conf) => {
       conf.try_into()
+    }
+  }
+}
+
+pub fn save_curve_to_config_kdl(curve: Arc<Mutex<FanCurveUwU>>) -> Result<(), anyhow::Error> {
+  let curve: Vec<(i32, u32)> = {
+    let c = curve.lock().unwrap();
+    let cc = &*c;
+    cc.into()
+  };
+  let mut new_conf = Vec::new();
+  new_conf.push("fan_curve {".to_string());
+  for (temp, speed) in curve {
+    new_conf.push(format!("  :{}C     @{}%", temp, speed));
+  }
+  new_conf.push("}".to_string());
+  let is_root = !running_unpriviledged();
+  let new_file = new_conf.join("\n");
+  let app_name = Some("nvFanService");
+  let config_file = "config.kdl";
+  let mut path: PathBuf = if is_root {
+    "/etc/nvFanService".into()
+  } else {
+    if let Some(app_dirs) = AppDirs::new(app_name, true) {
+      app_dirs.config_dir
+    } else {
+      let error = "Failed to get home directory. Cannot check for or create config file.".to_owned();
+      log::info!("{}", error);
+      return Err(anyhow!(error));
+    }
+  };
+  if let Err(e) = std::fs::create_dir_all(&path) {
+    let error = format!("Failed to create config dir: {}\nError: {}", path.display(), e);
+    // log::error!("{}", error);
+    return Err(anyhow!(error));
+  }
+  path.push(config_file);
+  match std::fs::exists(&path) {
+    Err(e)    => {
+      let error = format!("Failed to check existence of config file: {}\nError: {}", path.display(), e);
+      // log::error!("{}", error);
+      return Err(anyhow!(error));
+    }
+    Ok(false) => {
+      // The file does not exist, oddly, so we're free to write it
+      if let Err(e) = std::fs::write(&path, new_file) {
+        let error = format!("Error saving new config.kdl: Failed on write: {}\nError: {}", path.display(), e);
+        return Err(anyhow!(error));
+      };
+      Ok(())
+    }
+    Ok(true)  => {
+      // The file exists, delete and write new file
+      if let Err(e) = std::fs::remove_file(&path) {
+        let error = format!("Failed to delete existing config file: {}\nError: {}", path.display(), e);
+        return Err(anyhow!(error));
+      };
+      if let Err(e) = std::fs::write(&path, new_file) {
+        let error = format!("Error saving new config.kdl after deleting the old file: Failed on write: {}\nError: {}", path.display(), e);
+        return Err(anyhow!(error));
+      };
+      Ok(())
     }
   }
 }
@@ -117,10 +187,10 @@ impl NvfsConfig {
   pub fn fan_curve(&self) -> Vec<(i32, u32)> { self.fan_curve.to_owned() }
 }
 impl TryFrom<KdlDocument> for NvfsConfig {
-  type Error = String;
+  type Error = anyhow::Error;
   fn try_from(conf: KdlDocument) -> Result<Self, Self::Error> {
     let fan_curve: Vec<(i32, u32)> = match conf.fan_curve() {
-      Err(e) => { return Err(e); }
+      Err(e) => { return Err(anyhow!(e)); }
       Ok(val) => { val }
     };
     Ok(Self { fan_curve })

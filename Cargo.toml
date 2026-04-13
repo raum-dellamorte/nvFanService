@@ -1,21 +1,27 @@
 [package]
 name = "nvfanservice"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.102"
 arrayvec = "0.7.4"
+bytes = "1.11.1"
 cursive = "0.21.1"
 cursive_core = "0.4.6"
+futures = "0.3.32"
 image = "0.25.6"
 kdl = "6.5.0"
 libc = "0.2.172"
 log = "0.4.27"
+nix = { version = "0.31.2", features = ["user", "fs"] }
 nom = "8.0.0"
 nvml-wrapper = { git = "https://github.com/raum-dellamorte/nvml-wrapper.git" }
 platform-dirs = "0.3.0"
-# nvml-wrapper = "0.10.0"
 regex = "1.10.5"
 sdl3 = { version = "0.15.1", features = ["ttf"]}
 sdl3-sys = "0.5.7"
-# sudo = "0.6.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.51.1", features = ["full"] }
+tokio-util = { version = "0.7.18", features = ["codec"] }
