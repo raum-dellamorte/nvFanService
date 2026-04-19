@@ -1,6 +1,7 @@
 use {
   crate::{
     // cursive_frontend::nvfs_cursive_frontend,
+    nvfs_config::NvfsConfig,
     daemon::{Envelope, Request, Response,},
     FanCurveUwU,
   },
@@ -17,20 +18,22 @@ use {
 };
 
 pub struct FanServiceClient {
+  pub conf: NvfsConfig,
   socket_path: String,
   connection: Framed<UnixStream, LengthDelimitedCodec>,
   next_id: u64,
   curve: Arc<Mutex<FanCurveUwU>>,
 }
 impl FanServiceClient {
-  pub async fn new(curve: FanCurveUwU, socket_path: &str) -> Result<Self, anyhow::Error> {
+  pub async fn new(conf: NvfsConfig, socket_path: &str) -> Result<Self, anyhow::Error> {
     let stream = UnixStream::connect(socket_path)
       .await
       .with_context(|| format!("Failed to connect to socket at {}", socket_path))?;
     let socket_path = socket_path.into();
     let connection = Framed::new(stream, LengthDelimitedCodec::new());
+    let curve = conf.fan_curve().try_into()?;
     let curve = Arc::new(Mutex::new(curve));
-    Ok(Self { socket_path, connection, next_id: 1, curve })
+    Ok(Self { conf, socket_path, connection, next_id: 1, curve })
   }
   async fn send_request(&mut self, body: Request) -> Result<Response, anyhow::Error> {
     let id = self.next_id;

@@ -38,13 +38,11 @@ use {
 const CONFIG_KDL: &str =
 r#"// nvFanService settings
 fan_curve {
-  :10C      @0%
-  :20C     @30%
-  :30C     @60%
-  :36C     @70%
-  :40C     @80%
-  :46C     @90%
-  :50C    @100%
+  :20C      @0%
+  :30C     @50%
+  :40C     @70%
+  :48C     @90%
+  :52C    @100%
 } 
 "#;
 
@@ -112,7 +110,7 @@ fn validate_config(conf: String) -> Result<NvfsConfig, anyhow::Error> {
       Err(anyhow!(error))
     }
     Ok(conf) => {
-      conf.try_into()
+      Ok(conf.into())
     }
   }
 }
@@ -182,49 +180,78 @@ pub fn save_curve_to_config_kdl(curve: Arc<Mutex<FanCurveUwU>>) -> Result<(), an
 #[derive(Debug)]
 pub struct NvfsConfig {
   fan_curve: Vec<(i32, u32)>,
+  pub font: Option<PathBuf>,
+  errors: Vec<anyhow::Error>,
 }
 impl NvfsConfig {
   pub fn fan_curve(&self) -> Vec<(i32, u32)> { self.fan_curve.to_owned() }
 }
-impl TryFrom<KdlDocument> for NvfsConfig {
-  type Error = anyhow::Error;
-  fn try_from(conf: KdlDocument) -> Result<Self, Self::Error> {
-    let fan_curve: Vec<(i32, u32)> = match conf.fan_curve() {
-      Err(e) => { return Err(anyhow!(e)); }
-      Ok(val) => { val }
-    };
-    Ok(Self { fan_curve })
+impl From<KdlDocument> for NvfsConfig {
+  fn from(conf: KdlDocument) -> Self {
+    let mut errors = Vec::new();
+    let (fan_curve, error) = conf.fan_curve();
+    if error.is_err() {
+      errors.push(error.err().unwrap());
+    }
+    let font_res = conf.font();
+    let mut font = None;
+    if font_res.is_ok() {
+      font = font_res.unwrap();
+    } else {
+      errors.push(font_res.err().unwrap());
+    }
+    Self { fan_curve, font, errors }
   }
 }
 
 pub trait NvfsValues {
-  fn fan_curve(&self) -> Result<Vec<(i32, u32)>, String>;
+  fn fan_curve(&self) -> (Vec<(i32, u32)>, anyhow::Result<()>);
+  fn font(&self) -> anyhow::Result<Option<PathBuf>>;
 }
 
 #[allow(clippy::needless_return)]
 impl NvfsValues for KdlDocument {
-  fn fan_curve(&self) -> Result<Vec<(i32, u32)>, String> {
+  fn fan_curve(&self) -> (Vec<(i32, u32)>, anyhow::Result<()>) {
+    let default: Vec<(i32, u32)> = vec![
+      (20, 0),
+      (30, 50),
+      (40, 70),
+      (48, 90),
+      (52, 100),
+    ];
     if let Some(node) = self.get("fan_curve") {
       if let Some(children) = node.children() {
         let mut fan_curve = Vec::new();
         for child in children.nodes() {
-          let temp = match parse_temp(child.name().value()) {
+          let temp: i32 = match parse_temp(child.name().value()) {
             Ok((&_, temp)) => { temp }
-            Err(e) => { return Err(format!("Invalid temperature value: {}", e)); }
+            Err(e) => { return (default, Err(anyhow!("Invalid temperature value: {}", e))); }
           };
-          let pct = if let Some(entry) = child.entry(0) {
+          let pct: u32 = if let Some(entry) = child.entry(0) {
             if let KdlValue::String(pct) = entry.value() {
               if let Ok((_, pct)) = parse_pct(pct) {
                 pct
-              } else { return Err(format!("Temperature {}C has invalid Fan Percent value", temp)); }
-            } else { return Err(format!("Temperature {}C: Failed to read percentage value as a string", temp)); }
-          } else { return Err(format!("Temperature {}C has no Fan Percent value", temp)); };
+              } else { return (default, Err(anyhow!("Temperature {}C has invalid Fan Percent value", temp))); }
+            } else { return (default, Err(anyhow!("Temperature {}C: Failed to read percentage value as a string", temp))); }
+          } else { return (default, Err(anyhow!("Temperature {}C has no Fan Percent value", temp))); };
           fan_curve.push((temp, pct));
         }
         fan_curve.sort_by_key(|&(temp, _)| temp);
-        return Ok(fan_curve);
-      } else { return Err("'fan_curve' node has no fields".to_owned()); }
-    } else { return Err("'fan_curve' node not present".to_owned()); }
+        return (fan_curve, Ok(()));
+      } else { return (default, Err(anyhow!("'fan_curve' node has no fields"))); }
+    } else { return (default, Err(anyhow!("'fan_curve' node not present"))); }
+  }
+  fn font(&self) -> anyhow::Result<Option<PathBuf>> {
+    if let Some(node) = self.get("font") {
+      if let Some(entry) = node.entry(0) {
+        if let KdlValue::String(font) = entry.value() {
+          let font = PathBuf::from(font);
+          if font.exists() {
+            Ok(Some(font))
+          } else { Err(anyhow!("font file does not exist at the given path: {}", font.display())) }
+        } else { Err(anyhow!("font node exists but has no valid font path")) }
+      } else { Err(anyhow!("font node exists but has no entries")) }
+    } else { Ok(None) }
   }
 }
 

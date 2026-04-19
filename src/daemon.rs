@@ -1,6 +1,6 @@
 use {
   crate::{
-    FanCurveUwU,
+    nvfs_config::NvfsConfig,
     FanService,
     FanServiceArcMutex,
   },
@@ -24,7 +24,8 @@ use {
   tokio_util::codec::{Framed, LengthDelimitedCodec,},
 };
 
-pub async fn daemon(curve: FanCurveUwU, socket_path: &str) -> anyhow::Result<()> {
+pub async fn daemon(conf: NvfsConfig, socket_path: &str) -> anyhow::Result<()> {
+  let curve = conf.fan_curve().try_into()?;
   let mut fan_service = FanService::new(curve)?;
   let card_name = {
     let _ = fan_service.device()?;

@@ -32,6 +32,13 @@ const SLIDER_KNOB : Color = Color::RGBA(0, 100, 60, 255);
 const SHADOW_KNOB : Color = Color::RGBA(20, 80, 60, 255);
 const SLIDER_TEMP_LABEL : Color = Color::RGBA(0, 60, 120, 255);
 
+// Font Priority List
+const FONTS: [&str; 3] = [
+    "/usr/share/fonts/TTF/FiraCodeNerdFontMono-Regular.ttf",
+    "/usr/share/fonts/noto/NotoSansMono-Medium.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+];
+
 pub async fn nvfs_sdl3_frontend(mut fan_service: FanServiceClient) -> Result<(), anyhow::Error> {
   // SDL3 Setup
   // Prefer Wayland if available
@@ -54,8 +61,12 @@ pub async fn nvfs_sdl3_frontend(mut fan_service: FanServiceClient) -> Result<(),
   // Initialize sdl3
   let sdl_context = sdl3::init().unwrap();
   let ttf_context = sdl3::ttf::init().unwrap();
-  let fira = ttf_context.load_font("/usr/share/fonts/TTF/FiraCodeNerdFontMono-Regular.ttf", 26.0)
-    .expect("Couldn't load FiraCodeNerdFontMono Regular TTF");
+  let ttf_font = if let Some(ref path) = fan_service.conf.font && let Ok(font) = ttf_context.load_font(path, 26.0) {
+    font // I love this. `if let Some(x) = option && let Ok(y) = fallible_fn(x) { ... }` in my opinion is convenient error handling.
+  } else { // If I had to nest the ttf_context check inside the path check, it would be less convenient to pass the failure case to the below bit that attempts to load the first available fallback font.
+    FONTS.iter().find_map(|font| { ttf_context.load_font(font, 26.0).ok() } )
+      .expect("Couldn't load any of the expected Mono fonts. FiraCodeNerdFontMono Regular is preferred. None of the alternatives, NotoSansMono and DejaVuSansMono, were found, either. This may one day be configurable.")
+  };
   // let window_icon = Surface::from_file("res/nvfanservice.png")?;
   let video_subsystem = sdl_context.video().unwrap();
   let mut window = video_subsystem
@@ -83,7 +94,7 @@ pub async fn nvfs_sdl3_frontend(mut fan_service: FanServiceClient) -> Result<(),
   canvas.present();
   let mut i = 0; // For controlling when timed_service_service is run.
   let card_name = fan_service.request_card_name().await?;
-  let txt_gfx_card = fira.render(&card_name).blended(PRIMARY).unwrap();
+  let txt_gfx_card = ttf_font.render(&card_name).blended(PRIMARY).unwrap();
   let txt_gfx_card_half_w: i32 = (txt_gfx_card.width() / 2) as i32;
   let txt_region_gfx_card = Rect::new(
     0,0,txt_gfx_card.width(),txt_gfx_card.height()
@@ -91,7 +102,7 @@ pub async fn nvfs_sdl3_frontend(mut fan_service: FanServiceClient) -> Result<(),
   let mut fira_temp_and_speed = {
     let tempspeed = fan_service.request_tempspeed().await?;
     let ts_txt = format!("Temp: {:>2}C, Fan Speed: {:>3}%", tempspeed.0, tempspeed.1);
-    fira.render(&ts_txt).blended(PRIMARY).unwrap()
+    ttf_font.render(&ts_txt).blended(PRIMARY).unwrap()
   };
   let txt_temp_and_speed_half_w: i32 = (fira_temp_and_speed.width() / 2) as i32;
   let txt_region_temp_and_speed = Rect::new(
@@ -125,7 +136,7 @@ pub async fn nvfs_sdl3_frontend(mut fan_service: FanServiceClient) -> Result<(),
     if i == 0 {
       let tempspeed = fan_service.request_tempspeed().await?;
       let ts_txt = format!("Temp: {:>2}C, Fan Speed: {:>3}%", tempspeed.0, tempspeed.1);
-      fira_temp_and_speed = fira.render(&ts_txt).blended(PRIMARY).unwrap();
+      fira_temp_and_speed = ttf_font.render(&ts_txt).blended(PRIMARY).unwrap();
     }
     let tex_temp_and_speed = fira_temp_and_speed.as_texture(&texture_creator).unwrap();
     let tex_gfx_card = txt_gfx_card.as_texture(&texture_creator).unwrap();
@@ -198,15 +209,15 @@ pub async fn nvfs_sdl3_frontend(mut fan_service: FanServiceClient) -> Result<(),
             ) as i32;
             let slider_knob = Rect::new(x, y, 60, 30);
             let shadow_knob = Rect::new(x, shadow_y, 60, 30);
-            let tex_spd = fira.render(&spd_txt).blended(PRIMARY)
+            let tex_spd = ttf_font.render(&spd_txt).blended(PRIMARY)
               .unwrap()
               .as_texture(&texture_creator)
               .unwrap();
-            let tex_shadow_spd = fira.render(&shadow_spd_txt).blended(SHADOW_TXT)
+            let tex_shadow_spd = ttf_font.render(&shadow_spd_txt).blended(SHADOW_TXT)
               .unwrap()
               .as_texture(&texture_creator)
               .unwrap();
-            let tex_temp = fira.render(&tmp_txt).blended(PRIMARY)
+            let tex_temp = ttf_font.render(&tmp_txt).blended(PRIMARY)
               .unwrap()
               .as_texture(&texture_creator)
               .unwrap();

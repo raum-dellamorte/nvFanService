@@ -48,18 +48,17 @@ async fn main() -> Result<(), anyhow::Error> {
   } else {
     return Err(anyhow!("Failed to get or create config"));
   };
-  let curve = conf.fan_curve().try_into()?;
   // elevate_if_needed()?;
   let socket_path = "/run/nvFanService.sock";
   if as_root {
-    daemon(curve, socket_path).await
+    daemon(conf, socket_path).await
   } else {
-    client(curve, socket_path).await
+    client(conf, socket_path).await
   }
 }
 
-async fn client(curve: FanCurveUwU, socket_path: &str) -> anyhow::Result<()> {
-  let client = FanServiceClient::new(curve, socket_path).await?;
+async fn client(conf: NvfsConfig, socket_path: &str) -> anyhow::Result<()> {
+  let client = FanServiceClient::new(conf, socket_path).await?;
   // let args: Vec<String> = env::args().collect();
   // if args.len() == 2 && &args[1] == "cli" {
   //   nvfs_cursive_frontend(client).await
