@@ -25,6 +25,9 @@ use {
 const BG : Color = Color::RGBA(0, 0, 0, 255);
 const PRIMARY : Color = Color::RGBA(0, 200, 0, 255);
 const SHADOW_TXT : Color = Color::RGBA(150, 0, 150, 255);
+const BUTTON_BG : Color = Color::RGBA(65, 65, 80, 255);
+const BUTTON_FG : Color = Color::RGBA(115, 140, 115, 255);
+const BUTTON_HIGHLIGHT : Color = Color::RGBA(130, 150, 130, 255);
 const SLIDER_BG : Color = Color::RGBA(15, 25, 65, 255);
 const SLIDER_HIGHLIGHT : Color = Color::RGBA(25, 35, 75, 255);
 const SLIDER_TRACK : Color = Color::RGBA(30, 10, 10, 255);
@@ -152,6 +155,12 @@ pub async fn nvfs_sdl3_frontend(mut fan_service: FanServiceClient) -> Result<(),
       fira_temp_and_speed.width(),fira_temp_and_speed.height()
     );
     let header_height = 60 + txt_gfx_card.height() + fira_temp_and_speed.height();
+    let tab_bar_height = 20;
+    let draw_pos_tab_bar = Rect::new(
+      10, header_height as i32,
+      canvas_rect.width() - 20, tab_bar_height,
+    );
+    let header_height = header_height + tab_bar_height + 10;
     let draw_pos_slider_box = Rect::new(
       10, header_height as i32,
       canvas_rect.width() - 20, canvas_rect.height() - header_height - 10,
@@ -159,7 +168,7 @@ pub async fn nvfs_sdl3_frontend(mut fan_service: FanServiceClient) -> Result<(),
     let mut sliders = Vec::new();
     {
       if let Ok(curve) = fan_service.user_curve().lock() {
-        // for each point in the curve ake Rects to draw sliders
+        // for each point in the curve make Rects to draw sliders
         let count = curve.points.len() as u32;
         let w = draw_pos_slider_box.width() - 10;
         let x_offset_base = draw_pos_slider_box.x() + 5;
@@ -240,6 +249,7 @@ pub async fn nvfs_sdl3_frontend(mut fan_service: FanServiceClient) -> Result<(),
     canvas.copy(&tex_gfx_card, txt_region_gfx_card, draw_pos_gfx_card).unwrap();
     canvas.copy(&tex_temp_and_speed, txt_region_temp_and_speed, draw_pos_temp_and_speed).unwrap();
     canvas.set_draw_color(SLIDER_BG);
+    canvas.fill_rect(draw_pos_tab_bar).unwrap();
     canvas.fill_rect(draw_pos_slider_box).unwrap();
     canvas.set_draw_color(SLIDER_HIGHLIGHT);
     for (_, highlight_rect, highlight, _, _, _, _, _, _) in &sliders {

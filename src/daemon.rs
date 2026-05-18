@@ -160,7 +160,7 @@ fn timed_service_service(fs: Arc<Mutex<FanService>>) {
         break;
       }
       if pause { continue; }
-      if instant.elapsed() >= Duration::from_secs(2) {
+      if instant.elapsed() >= Duration::from_millis(500) {
         if let Err(e) = fsc.service_service() {
           error!("Error in service service: {}", e);
         }

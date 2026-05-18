@@ -1,14 +1,14 @@
 #![allow(unused_braces)]
 use {
   crate::{
-    timed_service_service,
+    // timed_service_service,
     FanCurveUwU,
     // FanService,
-    FanServiceArcMutex,
+    // FanServiceArcMutex,
     FanServiceClient,
   },
   cursive::{
-    event::Event,
+    // event::Event,
     theme::Theme,
     views::{
       HideableView, LinearLayout, NamedView, OnEventView,
@@ -21,27 +21,65 @@ use {
   cursive_core::style::{
     BaseColor::*, Color::*, PaletteColor::*,
   },
-  futures::{
-    // executor::block_on,
-    SinkExt,
-  },
+  // futures::{
+  //   // executor::block_on,
+  //   SinkExt,
+  // },
   std::{
-    error::Error,
+    // error::Error,
     sync::{ Arc, Mutex, },
-    // time::Duration,
+    time::Duration,
   },
-  tokio::runtime::Runtime,
+  tokio::{
+    // runtime::Runtime,
+    sync::mpsc,
+  },
 };
 
 /// This frontend is currently broken. Likely migrating to Ratatui
 
-pub async fn nvfs_cursive_frontend(mut fan_service: FanServiceClient) -> Result<(), anyhow::Error> {
+pub async fn nvfs_cursive_frontend(mut fan_service: FanServiceClient) -> anyhow::Result<()> {
+  let card_name = fan_service.request_card_name().await?;
+  let curve = fan_service.user_curve();
   let mut siv = Cursive::new();
   let content = TextContent::new("  Temp: ??C, Fan Speed: ???%  ");
-  let card_name = tokio::runtime::Handle::current().block_on(fan_service.request_card_name())?;
-  let curve = fan_service.curve();
-  let fan_service = Arc::new(Mutex::new(fan_service));
-  siv.set_user_data(fan_service);
+  let content_tokio = content.clone();
+  let cb_sink = siv.cb_sink().clone();
+  let (tx, mut rx) = mpsc::channel::<FanServiceMsg>(32);
+  
+  tokio::spawn(async move {
+    let mut interval = tokio::time::interval(Duration::from_millis(250));
+    loop {
+      let content_clone = content_tokio.clone();
+      tokio::select! {
+        _ = interval.tick() => {
+          let txt = match fan_service.request_tempspeed().await {
+            Ok((temp, speed)) => {
+              format!("  Temp: {:>2}C, Fan Speed: {:>3}%  ", temp, speed)
+            }
+            Err(_) => "No Response from FanService Server.".to_string()
+          };
+          let _ = cb_sink.send(Box::new(move |_siv| {
+            content_clone.set_content(txt);
+          }));
+        }
+        Some(msg) = rx.recv() => {
+          match msg {
+            FanServiceMsg::UpdateTempSpeed {temp, speed} => {
+              let _ = fan_service.update_temp_node_with_new_speed(temp, speed).await;
+            }
+            // FanServiceMsg::UpdateCurve { curve } => {}
+            FanServiceMsg::Close => {
+              // let _ = fan_service.
+            }
+          }
+        }
+        else => break
+      }
+    }
+  });
+  
+  // siv.set_user_data(fan_service);
   siv.with_theme(|theme: &mut Theme| { // One day, this could be customized.
     theme.palette[Background] = Dark(Black);
     theme.palette[Shadow] = Rgb(30, 0, 0);
@@ -49,20 +87,21 @@ pub async fn nvfs_cursive_frontend(mut fan_service: FanServiceClient) -> Result<
     theme.palette[Primary] = Rgb(0, 200, 0);
     theme.palette[TitlePrimary] = Rgb(0, 100, 0);
   });
+  let curve_tx = tx.clone();
   if let Ok(curve) = curve.lock().as_ref() {
     siv.add_layer(OnEventView::new(LinearLayout::vertical()
       .child(
         Panel::new( TextView::new_with_content(content.clone()) ).title(card_name)
       )
       .child(
-        NamedView::new("SlidersHideable",HideableView::new( curve.view() ))
+        NamedView::new("SlidersHideable",HideableView::new( curve.view(curve_tx) ))
       )
-    ).on_event(Event::Refresh, async move |siv| refresh_callback(siv, content.clone()).await));
+    )); // .on_event(Event::Refresh, async move |siv| refresh_callback(siv, content.clone()).await));
   }
-  siv.add_global_callback('q', |siv| {
-    let mut fsc = siv.user_data::<Arc<Mutex<FanServiceClient>>>().unwrap().clone();
-    let mut fs = fsc.lock().unwrap();
-    tokio::runtime::Handle::current().block_on(fs.connection.close()).expect("Failed to close connection");
+  let quit_tx = tx.clone();
+  siv.add_global_callback('q', move |siv| {
+    let _ = quit_tx.try_send(FanServiceMsg::Close);
+    siv.quit();
   });
   siv.set_fps(10);
   siv.set_autorefresh(true);
@@ -91,29 +130,50 @@ async fn refresh_callback(siv: &mut Cursive, fan_info_text: TextContent) {
   fan_info_text.set_content(&txt);
 }
 
+pub enum FanServiceMsg {
+  UpdateTempSpeed {
+    temp: i32,
+    speed: u32,
+  },
+  // UpdateCurve {
+  //   curve: Vec<(i32,u32)>,
+  // },
+  Close,
+}
+
 pub trait CursiveView {
-  fn view(&self) -> Panel<LinearLayout>;
+  fn view(&self, tx: mpsc::Sender<FanServiceMsg>) -> Panel<LinearLayout>;
 }
 
 impl CursiveView for FanCurveUwU {
-  fn view(&self) -> Panel<LinearLayout> {
+  fn view(&self, tx: mpsc::Sender<FanServiceMsg>) -> Panel<LinearLayout> {
     let mut ll = LinearLayout::horizontal();
     if self.points.is_empty() { return Panel::new(LinearLayout::horizontal()) }
     for i in 0..self.points.len() {
       let temp_speed_clone = self.points[i].clone();
+      let tx = tx.clone();
       if let Ok(temp_speed) = self.points[i].lock() {
         ll.add_child(
-          cursive_custom::FanCurveUnitView::new(temp_speed.temp(),temp_speed.speed())
-            .on_change(move |_, slider_temp, slider_speed| {
-              if let Ok(temp_speed) = temp_speed_clone.lock().as_mut() {
-                if temp_speed.temp() != slider_temp {
-                  temp_speed.update_temp(slider_temp);
-                }
-                if temp_speed.speed() != slider_speed {
+          cursive_custom::FanCurveUnitView::new(
+            temp_speed.temp(),temp_speed.speed()
+          )
+          .on_change(move |_, slider_temp, slider_speed| {
+            if let Ok(temp_speed) = temp_speed_clone.lock().as_mut() {
+              // // Changing temp in the TUI is not yet available
+              // if temp_speed.temp() != slider_temp && temp_speed.speed() == slider_speed {
+              //   temp_speed.update_temp(slider_temp);
+              // }
+              if temp_speed.temp() == slider_temp && temp_speed.speed() != slider_speed {
+                if let Ok(_) = tx.try_send(
+                  FanServiceMsg::UpdateTempSpeed { temp: slider_temp, speed: slider_speed }
+                ) {
                   temp_speed.update_speed(slider_speed);
-                }
+                };
               }
-            })
+              // If both changed at the same time, which should not be possible, then we'd
+              // change the temp first then change the speed for that temp.
+            }
+          })
         )
       }
     }

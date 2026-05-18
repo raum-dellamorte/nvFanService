@@ -2,6 +2,7 @@
 use {
   crate::{
     client::FanServiceClient,
+    cursive_frontend::nvfs_cursive_frontend,
     daemon::daemon,
     elevate::running_unpriviledged,
     nvfs_config::NvfsConfig,
@@ -29,8 +30,7 @@ use {
 #[macro_use]
 extern crate log;
 
-// mod cursive_custom;
-// mod cursive_frontend;
+mod cursive_frontend;
 mod client;
 mod daemon;
 mod elevate;
@@ -48,7 +48,6 @@ async fn main() -> Result<(), anyhow::Error> {
   } else {
     return Err(anyhow!("Failed to get or create config"));
   };
-  // elevate_if_needed()?;
   let socket_path = "/run/nvFanService.sock";
   if as_root {
     daemon(conf, socket_path).await
@@ -59,13 +58,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
 async fn client(conf: NvfsConfig, socket_path: &str) -> anyhow::Result<()> {
   let client = FanServiceClient::new(conf, socket_path).await?;
-  // let args: Vec<String> = env::args().collect();
-  // if args.len() == 2 && &args[1] == "cli" {
-  //   nvfs_cursive_frontend(client).await
-  // } else {
-  //   nvfs_sdl3_frontend(client).await
-  // }
-  nvfs_sdl3_frontend(client).await
+  let args: Vec<String> = std::env::args().collect();
+  if args.len() == 2 && &args[1] == "cli" {
+    nvfs_cursive_frontend(client).await
+  } else {
+    nvfs_sdl3_frontend(client).await
+  }
 }
 
 struct FanService {
